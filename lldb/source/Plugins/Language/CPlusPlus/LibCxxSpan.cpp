@@ -57,7 +57,7 @@ public:
 
   bool MightHaveChildren() override;
 
-  size_t GetIndexOfChildWithName(ConstString name) override;
+  llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
 private:
   ValueObject *m_start = nullptr; ///< First element of span. Held, not owned.
@@ -134,11 +134,17 @@ bool lldb_private::formatters::LibcxxStdSpanSyntheticFrontEnd::
   return true;
 }
 
-size_t lldb_private::formatters::LibcxxStdSpanSyntheticFrontEnd::
-    GetIndexOfChildWithName(ConstString name) {
+llvm::Expected<size_t> lldb_private::formatters::
+    LibcxxStdSpanSyntheticFrontEnd::GetIndexOfChildWithName(ConstString name) {
   if (!m_start)
-    return UINT32_MAX;
-  return ExtractIndexFromString(name.GetCString());
+    return llvm::createStringError("Type has no child named '%s'",
+                                   name.AsCString());
+  size_t idx = ExtractIndexFromString(name.GetCString());
+  if (idx == UINT32_MAX) {
+    return llvm::createStringError("Type has no child named '%s'",
+                                   name.AsCString());
+  }
+  return idx;
 }
 
 lldb_private::SyntheticChildrenFrontEnd *

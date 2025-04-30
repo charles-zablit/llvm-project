@@ -64,7 +64,7 @@ public:
 
   bool MightHaveChildren() override;
 
-  size_t GetIndexOfChildWithName(ConstString name) override;
+  llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
 private:
   /// A non-owning pointer to slice_array.__vp_.
@@ -151,11 +151,17 @@ bool lldb_private::formatters::LibcxxStdSliceArraySyntheticFrontEnd::
   return true;
 }
 
-size_t lldb_private::formatters::LibcxxStdSliceArraySyntheticFrontEnd::
+llvm::Expected<size_t>
+lldb_private::formatters::LibcxxStdSliceArraySyntheticFrontEnd::
     GetIndexOfChildWithName(ConstString name) {
   if (!m_start)
-    return std::numeric_limits<size_t>::max();
-  return ExtractIndexFromString(name.GetCString());
+    return llvm::createStringError("Type has no child named '%s'",
+                                   name.AsCString());
+  size_t idx = ExtractIndexFromString(name.GetCString());
+  if (idx == UINT32_MAX)
+    return llvm::createStringError("Type has no child named '%s'",
+                                   name.AsCString());
+  return idx;
 }
 
 lldb_private::SyntheticChildrenFrontEnd *

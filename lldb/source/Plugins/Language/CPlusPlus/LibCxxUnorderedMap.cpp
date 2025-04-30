@@ -42,7 +42,7 @@ public:
 
   bool MightHaveChildren() override;
 
-  size_t GetIndexOfChildWithName(ConstString name) override;
+  llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
 private:
   CompilerType GetNodeType();
@@ -72,7 +72,7 @@ public:
 
   bool MightHaveChildren() override;
 
-  size_t GetIndexOfChildWithName(ConstString name) override;
+  llvm::Expected<size_t> GetIndexOfChildWithName(ConstString name) override;
 
 private:
   lldb::ValueObjectSP m_pair_sp; ///< ValueObject for the key/value pair
@@ -299,9 +299,15 @@ bool lldb_private::formatters::LibcxxStdUnorderedMapSyntheticFrontEnd::
   return true;
 }
 
-size_t lldb_private::formatters::LibcxxStdUnorderedMapSyntheticFrontEnd::
+llvm::Expected<size_t>
+lldb_private::formatters::LibcxxStdUnorderedMapSyntheticFrontEnd::
     GetIndexOfChildWithName(ConstString name) {
-  return ExtractIndexFromString(name.GetCString());
+  size_t idx = ExtractIndexFromString(name.GetCString());
+  if (idx == UINT32_MAX) {
+    return llvm::createStringError("Type has no child named '%s'",
+                                   name.AsCString());
+  }
+  return idx;
 }
 
 SyntheticChildrenFrontEnd *
@@ -411,13 +417,15 @@ bool lldb_private::formatters::LibCxxUnorderedMapIteratorSyntheticFrontEnd::
   return true;
 }
 
-size_t lldb_private::formatters::LibCxxUnorderedMapIteratorSyntheticFrontEnd::
+llvm::Expected<size_t>
+lldb_private::formatters::LibCxxUnorderedMapIteratorSyntheticFrontEnd::
     GetIndexOfChildWithName(ConstString name) {
   if (name == "first")
     return 0;
   if (name == "second")
     return 1;
-  return UINT32_MAX;
+  return llvm::createStringError("Type has no child named '%s'",
+                                 name.AsCString());
 }
 
 SyntheticChildrenFrontEnd *

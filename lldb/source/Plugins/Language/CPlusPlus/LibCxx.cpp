@@ -314,13 +314,15 @@ bool lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::
   return true;
 }
 
-size_t lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::
+llvm::Expected<size_t>
+lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::
     GetIndexOfChildWithName(ConstString name) {
   if (name == "__ptr_")
     return 0;
   if (name == "$$dereference$$")
     return 1;
-  return UINT32_MAX;
+  return llvm::createStringError("Type has no child named '%s'",
+                                 name.AsCString());
 }
 
 lldb_private::formatters::LibcxxSharedPtrSyntheticFrontEnd::
@@ -417,7 +419,8 @@ bool lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::
   return true;
 }
 
-size_t lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::
+llvm::Expected<size_t>
+lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::
     GetIndexOfChildWithName(ConstString name) {
   if (name == "pointer")
     return 0;
@@ -425,7 +428,8 @@ size_t lldb_private::formatters::LibcxxUniquePtrSyntheticFrontEnd::
     return 1;
   if (name == "$$dereference$$")
     return 2;
-  return UINT32_MAX;
+  return llvm::createStringError("Type has no child named '%s'",
+                                 name.AsCString());
 }
 
 bool lldb_private::formatters::LibcxxContainerSummaryProvider(
@@ -472,9 +476,15 @@ ExtractLibcxxStringInfo(ValueObject &valobj) {
   if (!l)
     return {};
 
-  StringLayout layout = l->GetIndexOfChildWithName("__data_") == 0
-                            ? StringLayout::DSC
-                            : StringLayout::CSD;
+  auto index_or_err = l->GetIndexOfChildWithName("__data_");
+  if (!index_or_err) {
+    LLDB_LOG_ERROR(GetLog(LLDBLog::DataFormatters), index_or_err.takeError(),
+                   "{0}");
+    return {};
+  }
+
+  StringLayout layout =
+      *index_or_err == 0 ? StringLayout::DSC : StringLayout::CSD;
 
   bool short_mode = false; // this means the string is in short-mode and the
                            // data is stored inline
