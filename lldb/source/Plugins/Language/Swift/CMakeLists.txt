@@ -27,6 +27,7 @@ add_lldb_library(lldbPluginSwiftLanguage PLUGIN
     lldbPluginTypeSystemSwift
     swiftAST
     swiftClangImporter
+    swiftCore
     clangAST
 
   LINK_COMPONENTS
