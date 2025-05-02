@@ -1,5 +1,11 @@
 set(LLVM_NO_RTTI 1)
 
+set(SWIFT_CORE_LIB)
+
+if(WIN32)
+  list(APPEND SWIFT_CORE_LIB swiftCore)
+endif()
+
 add_lldb_library(lldbPluginSwiftLanguage PLUGIN
   FoundationValueTypes.cpp
   LogChannelSwift.cpp
@@ -27,7 +33,7 @@ add_lldb_library(lldbPluginSwiftLanguage PLUGIN
     lldbPluginTypeSystemSwift
     swiftAST
     swiftClangImporter
-    swiftCore
+    ${SWIFT_CORE_LIB} # fixes a linker issue when building on Windows.
     clangAST
 
   LINK_COMPONENTS
