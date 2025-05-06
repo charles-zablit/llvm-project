@@ -33,7 +33,9 @@ add_lldb_library(lldbPluginSwiftLanguage PLUGIN
     lldbPluginTypeSystemSwift
     swiftAST
     swiftClangImporter
-    ${SWIFT_CORE_LIB} # fixes a linker issue when building on Windows.
+    ${SWIFT_CORE_LIB} # Fix for a build error when linking lib/liblldb.lib on Windows: 'unresolved external symbol __imp_swift_addNewDSOImage referenced in function "void __cdecl swift_image_constructor(void)"'
+                      # The symbol is present in the file but cannot be resolved.
+                      # This is a temporary workaround.
     clangAST
 
   LINK_COMPONENTS
