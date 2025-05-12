@@ -41,6 +41,7 @@
 #include <mutex>
 
 #include "lldb/lldb-enumerations.h"
+#include "lldb/Interpreter/OptionValueProperties.h"
 #include "swift/AST/ImportCache.h"
 #include "swift/Basic/InitializeSwiftModules.h"
 #include "swift/Demangling/ManglingMacros.h"
@@ -68,7 +69,7 @@ void SwiftLanguage::Initialize() {
   static ConstString g_SwiftStringStorageClass("_TtCs15__StringStorage");
   static ConstString g_NSArrayClass1("_TtCs22__SwiftDeferredNSArray");
   PluginManager::RegisterPlugin(GetPluginNameStatic(), "Swift Language",
-                                CreateInstance);
+                                CreateInstance, &DebuggerInitialize);
 
   lldb_private::formatters::NSString_Additionals::GetAdditionalSummaries()
       .emplace(
@@ -1878,6 +1879,209 @@ SwiftLanguage::GetDemangledFunctionNameWithoutArguments(Mangled mangled) const {
   if (demangled_name)
     return demangled_name;
   return mangled_name;
+}
+
+static std::optional<llvm::StringRef>
+GetDemangledBasename(const SymbolContext &sc) {
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return std::nullopt;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return std::nullopt;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return std::nullopt;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return std::nullopt;
+
+  return demangled_name.slice(info->BasenameRange.first,
+                              info->BasenameRange.second);
+}
+
+static std::optional<llvm::StringRef>
+GetDemangledTemplateArguments(const SymbolContext &sc) {
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return std::nullopt;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return std::nullopt;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return std::nullopt;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return std::nullopt;
+
+  if (info->ArgumentsRange.first < info->BasenameRange.second)
+    return std::nullopt;
+
+  return demangled_name.slice(info->BasenameRange.second,
+                              info->ArgumentsRange.first);
+}
+
+static std::optional<llvm::StringRef>
+GetDemangledReturnTypeLHS(const SymbolContext &sc) {
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return std::nullopt;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return std::nullopt;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return std::nullopt;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return std::nullopt;
+
+  if (info->ScopeRange.first >= demangled_name.size())
+    return std::nullopt;
+
+  return demangled_name.substr(0, info->ScopeRange.first);
+}
+
+static std::optional<llvm::StringRef>
+GetDemangledFunctionQualifiers(const SymbolContext &sc) {
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return std::nullopt;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return std::nullopt;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return std::nullopt;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return std::nullopt;
+
+  if (info->QualifiersRange.second < info->QualifiersRange.first)
+    return std::nullopt;
+
+  return demangled_name.slice(info->QualifiersRange.first,
+                              info->QualifiersRange.second);
+}
+
+static std::optional<llvm::StringRef>
+GetDemangledReturnTypeRHS(const SymbolContext &sc) {
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return std::nullopt;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return std::nullopt;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return std::nullopt;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return std::nullopt;
+
+  if (info->QualifiersRange.first < info->ArgumentsRange.second)
+    return std::nullopt;
+
+  return demangled_name.slice(info->ArgumentsRange.second,
+                              info->QualifiersRange.first);
+}
+
+static std::optional<llvm::StringRef>
+GetDemangledScope(const SymbolContext &sc) {
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return std::nullopt;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return std::nullopt;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return std::nullopt;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return std::nullopt;
+
+  if (info->ScopeRange.second < info->ScopeRange.first)
+    return std::nullopt;
+
+  return demangled_name.slice(info->ScopeRange.first, info->ScopeRange.second);
+}
+
+bool SwiftLanguage::HandleFrameFormatVariable(const SymbolContext &sc,
+                                              const ExecutionContext *exe_ctx,
+                                              FormatEntity::Entry::Type type,
+                                              Stream &s) {
+  if (type == FormatEntity::Entry::Type::FunctionBasename) {
+    std::optional<llvm::StringRef> name = GetDemangledBasename(sc);
+    if (!name)
+      return false;
+
+    s << *name;
+  }
+  return true;
+}
+
+#define LLDB_PROPERTIES_language_swift
+#include "LanguageSwiftProperties.inc"
+
+enum {
+#define LLDB_PROPERTIES_language_swift
+#include "LanguageSwiftPropertiesEnum.inc"
+};
+
+namespace {
+class PluginProperties : public Properties {
+public:
+  static llvm::StringRef GetSettingName() { return "display"; }
+
+  PluginProperties() {
+    m_collection_sp = std::make_shared<OptionValueProperties>(GetSettingName());
+    m_collection_sp->Initialize(g_language_swift_properties);
+  }
+
+  const FormatEntity::Entry *GetFunctionNameFormat() const {
+    return GetPropertyAtIndexAs<const FormatEntity::Entry *>(
+        ePropertyFunctionNameFormat);
+  }
+};
+} // namespace
+
+static PluginProperties &GetGlobalPluginProperties() {
+  static PluginProperties g_settings;
+  return g_settings;
+}
+
+const FormatEntity::Entry *SwiftLanguage::GetFunctionNameFormat() const {
+  return GetGlobalPluginProperties().GetFunctionNameFormat();
+}
+
+void SwiftLanguage::DebuggerInitialize(Debugger &debugger) {
+  if (!PluginManager::GetSettingForSwiftLanguagePlugin(
+          debugger, PluginProperties::GetSettingName())) {
+    PluginManager::CreateSettingForSwiftLanguagePlugin(
+        debugger, GetGlobalPluginProperties().GetValueProperties(),
+        "Properties for the Swift language plug-in.",
+        /*is_global_property=*/true);
+  }
 }
 
 namespace {

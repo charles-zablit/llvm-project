@@ -353,6 +353,28 @@ ConstString Mangled::GetDemangledNameImpl(bool force, // BEGIN SWIFT
     LLDB_LOGF(log, "demangle swift: %s", mangled_name);
     std::string demangled(SwiftLanguageRuntime::DemangleSymbolAsString(
         mangled_name, SwiftLanguageRuntime::eTypeName, sc));
+
+    swift::Demangle::Context ctx;
+    auto nodePtr =
+        SwiftLanguageRuntime::DemangleSymbolAsNode(mangled_name, ctx);
+    if (nodePtr != nullptr) {
+      auto node =
+          nodePtr->findByKind(swift::Demangle::Node::Kind::Function, INT32_MAX);
+      if (node != nullptr) {
+        auto nameNode = node->getChild(1);
+        if (nameNode->hasText()) {
+          std::string name(nameNode->getText());
+          // ConstString name = sc->function->GetName(sc);
+          std::string s_mangled_name(mangled_name);
+          size_t start_idx = demangled.find(name);
+          DemangledNameInfo info = {};
+          // info.BasenameRange = {8, 11};
+          info.BasenameRange = {start_idx, start_idx + name.length()};
+          m_demangled_info.emplace(std::move(info));
+        }
+      }
+    }
+
     // Don't cache the demangled name the function isn't available yet.
     if (!sc || !sc->function) {
       LLDB_LOGF(log, "demangle swift: %s -> \"%s\" (not cached)", mangled_name,
