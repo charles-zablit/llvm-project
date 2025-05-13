@@ -78,6 +78,14 @@ public:
   void endName() override {
     NameInfo.BasenameRange.second = getStreamLength();
   }
+
+  void startParameters() override {
+    NameInfo.ArgumentsRange.first = getStreamLength();
+  }
+
+  void endParameters() override {
+    NameInfo.ArgumentsRange.second = getStreamLength();
+  }
 };
 
 /// An OutputBuffer which keeps a record of where certain parts of a

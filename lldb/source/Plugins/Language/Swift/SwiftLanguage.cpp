@@ -1903,141 +1903,90 @@ GetDemangledBasename(const SymbolContext &sc) {
                               info->BasenameRange.second);
 }
 
-static std::optional<llvm::StringRef>
-GetDemangledTemplateArguments(const SymbolContext &sc) {
+static bool PrintDemangledArgumentList(Stream &s, const SymbolContext &sc) {
+  assert(sc.symbol);
+
   Mangled mangled = sc.GetPossiblyInlinedFunctionName();
   if (!mangled)
-    return std::nullopt;
+    return false;
 
   auto demangled_name = mangled.GetDemangledName().GetStringRef();
   if (demangled_name.empty())
-    return std::nullopt;
+    return false;
 
   const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
   if (!info)
-    return std::nullopt;
+    return false;
 
   // Function without a basename is nonsense.
   if (!info->hasBasename())
-    return std::nullopt;
+    return false;
 
-  if (info->ArgumentsRange.first < info->BasenameRange.second)
-    return std::nullopt;
+  if (info->ArgumentsRange.second < info->ArgumentsRange.first)
+    return false;
 
-  return demangled_name.slice(info->BasenameRange.second,
-                              info->ArgumentsRange.first);
+  s << demangled_name.slice(info->ArgumentsRange.first,
+                            info->ArgumentsRange.second);
+
+  return true;
 }
 
-static std::optional<llvm::StringRef>
-GetDemangledReturnTypeLHS(const SymbolContext &sc) {
-  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
-  if (!mangled)
-    return std::nullopt;
+static VariableListSP GetFunctionVariableList(const SymbolContext &sc) {
+  assert(sc.function);
 
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
-    return std::nullopt;
+  if (sc.block)
+    if (Block *inline_block = sc.block->GetContainingInlinedBlock())
+      return inline_block->GetBlockVariableList(true);
 
-  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
-  if (!info)
-    return std::nullopt;
-
-  // Function without a basename is nonsense.
-  if (!info->hasBasename())
-    return std::nullopt;
-
-  if (info->ScopeRange.first >= demangled_name.size())
-    return std::nullopt;
-
-  return demangled_name.substr(0, info->ScopeRange.first);
-}
-
-static std::optional<llvm::StringRef>
-GetDemangledFunctionQualifiers(const SymbolContext &sc) {
-  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
-  if (!mangled)
-    return std::nullopt;
-
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
-    return std::nullopt;
-
-  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
-  if (!info)
-    return std::nullopt;
-
-  // Function without a basename is nonsense.
-  if (!info->hasBasename())
-    return std::nullopt;
-
-  if (info->QualifiersRange.second < info->QualifiersRange.first)
-    return std::nullopt;
-
-  return demangled_name.slice(info->QualifiersRange.first,
-                              info->QualifiersRange.second);
-}
-
-static std::optional<llvm::StringRef>
-GetDemangledReturnTypeRHS(const SymbolContext &sc) {
-  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
-  if (!mangled)
-    return std::nullopt;
-
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
-    return std::nullopt;
-
-  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
-  if (!info)
-    return std::nullopt;
-
-  // Function without a basename is nonsense.
-  if (!info->hasBasename())
-    return std::nullopt;
-
-  if (info->QualifiersRange.first < info->ArgumentsRange.second)
-    return std::nullopt;
-
-  return demangled_name.slice(info->ArgumentsRange.second,
-                              info->QualifiersRange.first);
-}
-
-static std::optional<llvm::StringRef>
-GetDemangledScope(const SymbolContext &sc) {
-  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
-  if (!mangled)
-    return std::nullopt;
-
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
-    return std::nullopt;
-
-  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
-  if (!info)
-    return std::nullopt;
-
-  // Function without a basename is nonsense.
-  if (!info->hasBasename())
-    return std::nullopt;
-
-  if (info->ScopeRange.second < info->ScopeRange.first)
-    return std::nullopt;
-
-  return demangled_name.slice(info->ScopeRange.first, info->ScopeRange.second);
+  return sc.function->GetBlock(true).GetBlockVariableList(true);
 }
 
 bool SwiftLanguage::HandleFrameFormatVariable(const SymbolContext &sc,
                                               const ExecutionContext *exe_ctx,
                                               FormatEntity::Entry::Type type,
                                               Stream &s) {
-  if (type == FormatEntity::Entry::Type::FunctionBasename) {
+  switch (type) {
+  case FormatEntity::Entry::Type::FunctionBasename: {
     std::optional<llvm::StringRef> name = GetDemangledBasename(sc);
     if (!name)
       return false;
 
     s << *name;
+
+    return true;
   }
-  return true;
+  case FormatEntity::Entry::Type::FunctionFormattedArguments: {
+    // This ensures we print the arguments even when no debug-info is available.
+    //
+    // FIXME: we should have a Entry::Type::FunctionArguments and
+    // use it in the plugin.cplusplus.display.function-name-format
+    // once we have a "fallback operator" in the frame-format language.
+    if (!sc.function && sc.symbol)
+      return PrintDemangledArgumentList(s, sc);
+
+    VariableList args;
+    if (auto variable_list_sp = GetFunctionVariableList(sc))
+      variable_list_sp->AppendVariablesWithScope(eValueTypeVariableArgument,
+                                                 args);
+
+    ExecutionContextScope *exe_scope =
+        exe_ctx ? exe_ctx->GetBestExecutionContextScope() : nullptr;
+
+    s << '(';
+    FormatEntity::PrettyPrintFunctionArguments(s, args, exe_scope);
+    s << ')';
+
+    return true;
+  }
+  case FormatEntity::Entry::Type::FunctionScope:
+  case FormatEntity::Entry::Type::FunctionTemplateArguments:
+  case FormatEntity::Entry::Type::FunctionReturnRight:
+  case FormatEntity::Entry::Type::FunctionReturnLeft:
+  case FormatEntity::Entry::Type::FunctionQualifiers:
+  case FormatEntity::Entry::Type::FunctionSuffix:
+  default:
+    return true;
+  }
 }
 
 #define LLDB_PROPERTIES_language_swift
