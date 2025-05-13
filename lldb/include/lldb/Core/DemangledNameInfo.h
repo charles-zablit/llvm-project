@@ -9,6 +9,7 @@
 #ifndef LLDB_CORE_DEMANGLEDNAMEINFO_H
 #define LLDB_CORE_DEMANGLEDNAMEINFO_H
 
+#include "swift/Demangling/Demangle.h"
 #include "llvm/Demangle/ItaniumDemangle.h"
 #include "llvm/Demangle/Utility.h"
 
@@ -63,6 +64,19 @@ struct DemangledNameInfo {
   bool hasBasename() const {
     return BasenameRange.second > BasenameRange.first &&
            BasenameRange.second > 0;
+  }
+};
+
+class SwiftTrackingOutputBuffer : public swift::Demangle::TrackingDemanglerPrinter {
+public:
+  DemangledNameInfo NameInfo;
+
+  void startName() override {
+    NameInfo.BasenameRange.first = getStreamLength();
+  }
+
+  void endName() override {
+    NameInfo.BasenameRange.second = getStreamLength();
   }
 };
 

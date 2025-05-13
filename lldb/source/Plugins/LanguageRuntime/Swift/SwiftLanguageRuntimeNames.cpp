@@ -13,6 +13,7 @@
 #include "SwiftLanguageRuntime.h"
 
 #include "lldb/Breakpoint/StoppointCallbackContext.h"
+#include "lldb/Core/DemangledNameInfo.h"
 #include "lldb/Symbol/Block.h"
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Symbol/VariableList.h"
@@ -713,7 +714,7 @@ void SwiftLanguageRuntime::GetGenericParameterNamesForFunction(
 
 std::string SwiftLanguageRuntime::DemangleSymbolAsString(
     llvm::StringRef symbol, DemangleMode mode, const SymbolContext *sc,
-    const ExecutionContext *exe_ctx) {
+    const ExecutionContext *exe_ctx, TrackingDemanglerPrinter *printer) {
   bool did_init = false;
   llvm::DenseMap<ArchetypePath, llvm::StringRef> dict;
   swift::Demangle::DemangleOptions options;
@@ -768,7 +769,7 @@ std::string SwiftLanguageRuntime::DemangleSymbolAsString(
       return name;
     };
   }
-  return swift::Demangle::demangleSymbolAsString(symbol, options);
+  return swift::Demangle::demangleSymbolAsString(symbol, options, printer);
 }
 
 swift::Demangle::NodePointer
