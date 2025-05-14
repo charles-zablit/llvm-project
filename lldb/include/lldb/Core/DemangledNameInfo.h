@@ -67,27 +67,6 @@ struct DemangledNameInfo {
   }
 };
 
-class SwiftTrackingOutputBuffer : public swift::Demangle::TrackingDemanglerPrinter {
-public:
-  DemangledNameInfo NameInfo;
-
-  void startName() override {
-    NameInfo.BasenameRange.first = getStreamLength();
-  }
-
-  void endName() override {
-    NameInfo.BasenameRange.second = getStreamLength();
-  }
-
-  void startParameters() override {
-    NameInfo.ArgumentsRange.first = getStreamLength();
-  }
-
-  void endParameters() override {
-    NameInfo.ArgumentsRange.second = getStreamLength();
-  }
-};
-
 /// An OutputBuffer which keeps a record of where certain parts of a
 /// demangled name begin/end (e.g., basename, scope, argument list, etc.).
 /// The tracking occurs during printing of the Itanium demangle tree.

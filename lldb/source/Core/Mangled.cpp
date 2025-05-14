@@ -351,10 +351,15 @@ ConstString Mangled::GetDemangledNameImpl(bool force, // BEGIN SWIFT
     const char *mangled_name = m_mangled.GetCString();
     Log *log = GetLog(LLDBLog::Demangle);
     LLDB_LOGF(log, "demangle swift: %s", mangled_name);
-    auto printer = SwiftTrackingOutputBuffer();
+    auto printer = swift::Demangle::TrackingDemanglerPrinter();
     std::string demangled(SwiftLanguageRuntime::DemangleSymbolAsString(
         mangled_name, SwiftLanguageRuntime::eTypeName, sc, nullptr, &printer));
-    m_demangled_info.emplace(std::move(printer.NameInfo));
+    DemangledNameInfo info;
+    info.BasenameRange.first = printer.getNameStart();
+    info.BasenameRange.second = printer.getNameEnd();
+    info.ArgumentsRange.first = printer.getParametersStart();
+    info.ArgumentsRange.second = printer.getParametersEnd();
+    m_demangled_info.emplace(std::move(info));
 
     // Don't cache the demangled name the function isn't available yet.
     if (!sc || !sc->function) {
