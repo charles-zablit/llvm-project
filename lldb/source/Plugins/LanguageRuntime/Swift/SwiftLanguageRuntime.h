@@ -200,10 +200,21 @@ public:
   IsSwiftAsyncAwaitResumePartialFunctionSymbol(llvm::StringRef name);
 
   enum DemangleMode { eSimplified, eTypeName, eDisplayTypeName };
+
+  static std::pair<std::string, std::optional<DemangledNameInfo>>
+  DemangleSymbolAsString(llvm::StringRef symbol, DemangleMode mode,
+                         bool tracking, const SymbolContext *sc = nullptr,
+                         const ExecutionContext *exe_ctx = nullptr);
+
   static std::string
   DemangleSymbolAsString(llvm::StringRef symbol, DemangleMode mode,
                          const SymbolContext *sc = nullptr,
                          const ExecutionContext *exe_ctx = nullptr);
+
+  static std::pair<std::string, DemangledNameInfo>
+  TrackedDemangleSymbolAsString(llvm::StringRef symbol, DemangleMode mode,
+                                const SymbolContext *sc = nullptr,
+                                const ExecutionContext *exe_ctx = nullptr);
 
   /// Demangle a symbol to a swift::Demangle node tree.
   ///

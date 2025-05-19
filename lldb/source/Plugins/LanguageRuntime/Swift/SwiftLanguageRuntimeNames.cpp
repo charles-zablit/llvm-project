@@ -13,6 +13,7 @@
 #include "SwiftLanguageRuntime.h"
 
 #include "lldb/Breakpoint/StoppointCallbackContext.h"
+#include "lldb/Core/DemangledNameInfo.h"
 #include "lldb/Symbol/Block.h"
 #include "lldb/Symbol/CompileUnit.h"
 #include "lldb/Symbol/VariableList.h"
@@ -814,9 +815,11 @@ void SwiftLanguageRuntime::GetGenericParameterNamesForFunction(
   }
 }
 
-std::string SwiftLanguageRuntime::DemangleSymbolAsString(
-    llvm::StringRef symbol, DemangleMode mode, const SymbolContext *sc,
-    const ExecutionContext *exe_ctx) {
+std::pair<std::string, std::optional<DemangledNameInfo>>
+SwiftLanguageRuntime::DemangleSymbolAsString(llvm::StringRef symbol,
+                                             DemangleMode mode, bool tracking,
+                                             const SymbolContext *sc,
+                                             const ExecutionContext *exe_ctx) {
   bool did_init = false;
   llvm::DenseMap<ArchetypePath, llvm::StringRef> dict;
   swift::Demangle::DemangleOptions options;
@@ -861,7 +864,7 @@ std::string SwiftLanguageRuntime::DemangleSymbolAsString(
       return swift::Demangle::genericParameterName(depth, index);
     };
   } else {
-    // Print generic generic parameter names.
+    // Print generic parameter names.
     options.GenericParameterName = [&](uint64_t depth, uint64_t index) {
       std::string name;
       {
@@ -871,7 +874,30 @@ std::string SwiftLanguageRuntime::DemangleSymbolAsString(
       return name;
     };
   }
-  return swift::Demangle::demangleSymbolAsString(symbol, options);
+  if (tracking) {
+    TrackingNodePrinter printer = TrackingNodePrinter(options);
+    std::string demangled =
+        swift::Demangle::demangleSymbolAsString(symbol, options, &printer);
+    return std::pair<std::string, std::optional<DemangledNameInfo>>(
+        demangled, printer.takeInfo());
+  }
+  return std::pair<std::string, std::optional<DemangledNameInfo>>(
+      swift::Demangle::demangleSymbolAsString(symbol, options), std::nullopt);
+}
+
+std::string SwiftLanguageRuntime::DemangleSymbolAsString(
+    llvm::StringRef symbol, DemangleMode mode, const SymbolContext *sc,
+    const ExecutionContext *exe_ctx) {
+  return DemangleSymbolAsString(symbol, mode, false, sc, exe_ctx).first;
+}
+
+std::pair<std::string, DemangledNameInfo>
+SwiftLanguageRuntime::TrackedDemangleSymbolAsString(
+    llvm::StringRef symbol, DemangleMode mode, const SymbolContext *sc,
+    const ExecutionContext *exe_ctx) {
+  auto demangledData = DemangleSymbolAsString(symbol, mode, true, sc, exe_ctx);
+  return std::pair<std::string, DemangledNameInfo>(demangledData.first,
+                                                   *demangledData.second);
 }
 
 swift::Demangle::NodePointer

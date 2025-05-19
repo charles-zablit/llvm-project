@@ -9,6 +9,7 @@
 #ifndef LLDB_CORE_DEMANGLEDNAMEINFO_H
 #define LLDB_CORE_DEMANGLEDNAMEINFO_H
 
+#include "swift/Demangling/Demangle.h"
 #include "llvm/Demangle/ItaniumDemangle.h"
 #include "llvm/Demangle/Utility.h"
 
@@ -72,6 +73,12 @@ struct DemangledNameInfo {
   /// Returns \c true if this object holds a valid basename range.
   bool hasBasename() const {
     return BasenameRange.second > BasenameRange.first;
+  }
+
+  /// Returns \c true if this object holds a valid arguments range.
+  bool hasArguments() const {
+    return ArgumentsRange.second > ArgumentsRange.first &&
+           ArgumentsRange.second > 0;
   }
 };
 

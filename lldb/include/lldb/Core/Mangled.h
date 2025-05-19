@@ -308,6 +308,75 @@ private:
 
 Stream &operator<<(Stream &s, const Mangled &obj);
 
+using namespace swift::Demangle;
+class TrackingNodePrinter : public NodePrinter {
+public:
+  TrackingNodePrinter(DemangleOptions options) : NodePrinter(options) {}
+
+  DemangledNameInfo takeInfo() { return std::move(info); }
+
+private:
+  DemangledNameInfo info;
+  std::optional<unsigned> parametersDepth;
+
+  void startName() {
+    if (!info.hasBasename())
+      info.BasenameRange.first = getStreamLength();
+  }
+
+  void endName() {
+    if (!info.hasBasename())
+      info.BasenameRange.second = getStreamLength();
+  }
+
+  void startParameters(unsigned depth) {
+    if (parametersDepth || !info.hasBasename() || info.hasArguments()) {
+      return;
+    }
+    info.ArgumentsRange.first = getStreamLength();
+    parametersDepth = depth;
+  }
+
+  void endParameters(unsigned depth) {
+    if (!parametersDepth || *parametersDepth != depth || info.hasArguments()) {
+      return;
+    }
+    info.ArgumentsRange.second = getStreamLength();
+  }
+
+  bool shouldTrackNameRange(NodePointer Node) const {
+    switch (Node->getKind()) {
+    case Node::Kind::Function:
+    case Node::Kind::Constructor:
+    case Node::Kind::Allocator:
+    case Node::Kind::ExplicitClosure:
+      return true;
+    default:
+      return false;
+    }
+  }
+
+  void printFunctionName(bool hasName, llvm::StringRef &OverwriteName,
+                         llvm::StringRef &ExtraName, bool MultiWordName,
+                         int &ExtraIndex, NodePointer Entity,
+                         unsigned int depth) override {
+    if (shouldTrackNameRange(Entity))
+      startName();
+    NodePrinter::printFunctionName(hasName, OverwriteName, ExtraName,
+                                   MultiWordName, ExtraIndex, Entity, depth);
+    if (shouldTrackNameRange(Entity))
+      endName();
+  }
+
+  void printFunctionParameters(NodePointer LabelList, NodePointer ParameterType,
+                               unsigned depth, bool showTypes) override {
+    startParameters(depth);
+    NodePrinter::printFunctionParameters(LabelList, ParameterType, depth,
+                                         showTypes);
+    endParameters(depth);
+  }
+};
+
 } // namespace lldb_private
 
 #endif // LLDB_CORE_MANGLED_H
