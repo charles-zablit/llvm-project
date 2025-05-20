@@ -4,12 +4,13 @@ add_lldb_unittest(LLDBCoreTests
   DumpDataExtractorTest.cpp
   DumpRegisterInfoTest.cpp
   FormatEntityTest.cpp
-  MangledTest.cpp
+  ItaniumMangledTest.cpp
   ModuleSpecTest.cpp
   ProgressReportTest.cpp
   RichManglingContextTest.cpp
   SourceLocationSpecTest.cpp
   SourceManagerTest.cpp
+  SwiftMangledTest.cpp
   UniqueCStringMapTest.cpp
 
   LINK_LIBS
