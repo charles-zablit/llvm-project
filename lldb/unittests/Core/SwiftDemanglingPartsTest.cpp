@@ -7,23 +7,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "Plugins/LanguageRuntime/Swift/SwiftLanguageRuntime.h"
-// #include "Plugins/ObjectFile/ELF/ObjectFileELF.h"
-// #include "Plugins/SymbolFile/Symtab/SymbolFileSymtab.h"
-// #include "TestingSupport/SubsystemRAII.h"
 #include "TestingSupport/TestUtilities.h"
 
 #include "lldb/Core/DemangledNameInfo.h"
 #include "lldb/Core/Mangled.h"
-// #include "lldb/Core/Module.h"
-// #include "lldb/Core/ModuleSpec.h"
-// #include "lldb/Host/FileSystem.h"
-// #include "lldb/Host/HostInfo.h"
-// #include "lldb/Symbol/SymbolContext.h"
-
-// #include "llvm/Support/FileUtilities.h"
-// #include "llvm/Support/Path.h"
-// #include "llvm/Support/Program.h"
-// #include "llvm/Testing/Support/Error.h"
 
 #include "gtest/gtest.h"
 
