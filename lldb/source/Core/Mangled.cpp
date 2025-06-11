@@ -353,8 +353,16 @@ ConstString Mangled::GetDemangledNameImpl(bool force, // BEGIN SWIFT
     const char *mangled_name = m_mangled.GetCString();
     Log *log = GetLog(LLDBLog::Demangle);
     LLDB_LOGF(log, "demangle swift: %s", mangled_name);
-    std::string demangled(SwiftLanguageRuntime::DemangleSymbolAsString(
-        mangled_name, SwiftLanguageRuntime::eTypeName, sc));
+    auto [demangled, info] =
+        SwiftLanguageRuntime::TrackedDemangleSymbolAsString(
+            mangled_name, SwiftLanguageRuntime::eSimplified, sc);
+    info.PrefixRange.second =
+        std::min(info.BasenameRange.first, info.ArgumentsRange.first);
+    info.SuffixRange.first =
+        std::max(info.BasenameRange.second, info.ArgumentsRange.second);
+    info.SuffixRange.second = demangled.length();
+    m_demangled_info.emplace(info);
+
     // Don't cache the demangled name the function isn't available yet.
     if (!sc || !sc->function) {
       LLDB_LOGF(log, "demangle swift: %s -> \"%s\" (not cached)", mangled_name,

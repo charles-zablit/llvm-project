@@ -73,6 +73,11 @@ struct DemangledNameInfo {
   bool hasBasename() const {
     return BasenameRange.second > BasenameRange.first;
   }
+
+  /// Returns \c true if this object holds a valid arguments range.
+  bool hasArguments() const {
+    return ArgumentsRange.second > ArgumentsRange.first;
+  }
 };
 
 /// An OutputBuffer which keeps a record of where certain parts of a
