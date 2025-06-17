@@ -1896,21 +1896,96 @@ SwiftLanguage::GetDemangledFunctionNameWithoutArguments(Mangled mangled) const {
 
 static std::optional<llvm::StringRef>
 GetDemangledBasename(const SymbolContext &sc) {
-  return std::nullopt;
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return std::nullopt;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return std::nullopt;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return std::nullopt;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return std::nullopt;
+
+  return demangled_name.slice(info->BasenameRange.first,
+                              info->BasenameRange.second);
 }
 
 static std::optional<llvm::StringRef>
 GetDemangledFunctionPrefix(const SymbolContext &sc) {
-  return std::nullopt;
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return std::nullopt;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return std::nullopt;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return std::nullopt;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return std::nullopt;
+
+  return demangled_name.slice(info->PrefixRange.first,
+                              info->PrefixRange.second);
 }
 
 static std::optional<llvm::StringRef>
 GetDemangledFunctionSuffix(const SymbolContext &sc) {
-  return std::nullopt;
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return std::nullopt;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return std::nullopt;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return std::nullopt;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return std::nullopt;
+
+  return demangled_name.slice(info->SuffixRange.first,
+                              info->SuffixRange.second);
 }
 
 static bool PrintDemangledArgumentList(Stream &s, const SymbolContext &sc) {
-  return false;
+  assert(sc.symbol);
+
+  Mangled mangled = sc.GetPossiblyInlinedFunctionName();
+  if (!mangled)
+    return false;
+
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
+  if (demangled_name.empty())
+    return false;
+
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return false;
+
+  // Function without a basename is nonsense.
+  if (!info->hasBasename())
+    return false;
+
+  if (info->ArgumentsRange.second < info->ArgumentsRange.first)
+    return false;
+
+  s << demangled_name.slice(info->ArgumentsRange.first,
+                            info->ArgumentsRange.second);
+
+  return true;
 }
 
 static VariableListSP GetFunctionVariableList(const SymbolContext &sc) {
@@ -1927,7 +2002,65 @@ bool SwiftLanguage::HandleFrameFormatVariable(const SymbolContext &sc,
                                               const ExecutionContext *exe_ctx,
                                               FormatEntity::Entry::Type type,
                                               Stream &s) {
-  return false;
+  switch (type) {
+  case FormatEntity::Entry::Type::FunctionBasename: {
+    std::optional<llvm::StringRef> name = GetDemangledBasename(sc);
+    if (!name)
+      return false;
+
+    s << *name;
+
+    return true;
+  }
+  case FormatEntity::Entry::Type::FunctionFormattedArguments: {
+    // This ensures we print the arguments even when no debug-info is available.
+    //
+    // FIXME: we should have a Entry::Type::FunctionArguments and
+    // use it in the plugin.cplusplus.display.function-name-format
+    // once we have a "fallback operator" in the frame-format language.
+    if (!sc.function && sc.symbol)
+      return PrintDemangledArgumentList(s, sc);
+    std::string display_name = SwiftLanguageRuntime::DemangleSymbolAsString(
+        sc.function->GetMangled().GetMangledName().GetStringRef(),
+        SwiftLanguageRuntime::eSimplified, &sc, exe_ctx);
+    if (display_name.empty())
+      return false;
+
+    VariableList args;
+    if (auto variable_list_sp = GetFunctionVariableList(sc))
+      variable_list_sp->AppendVariablesWithScope(eValueTypeVariableArgument,
+                                                 args);
+
+    s << GetFunctionDisplayArgs(sc, args, exe_ctx);
+    return true;
+  }
+  case FormatEntity::Entry::Type::FunctionPrefix: {
+    std::optional<llvm::StringRef> prefix = GetDemangledFunctionPrefix(sc);
+    if (!prefix)
+      return false;
+
+    s << *prefix;
+
+    return true;
+  }
+  case FormatEntity::Entry::Type::FunctionSuffix: {
+    std::optional<llvm::StringRef> suffix = GetDemangledFunctionSuffix(sc);
+    if (!suffix)
+      return false;
+
+    s << *suffix;
+
+    return true;
+  }
+
+  case FormatEntity::Entry::Type::FunctionScope:
+  case FormatEntity::Entry::Type::FunctionTemplateArguments:
+  case FormatEntity::Entry::Type::FunctionReturnRight:
+  case FormatEntity::Entry::Type::FunctionReturnLeft:
+  case FormatEntity::Entry::Type::FunctionQualifiers:
+  default:
+    return true;
+  }
 }
 
 #define LLDB_PROPERTIES_language_swift

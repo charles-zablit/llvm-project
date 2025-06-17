@@ -200,10 +200,16 @@ public:
   IsSwiftAsyncAwaitResumePartialFunctionSymbol(llvm::StringRef name);
 
   enum DemangleMode { eSimplified, eTypeName, eDisplayTypeName };
+
   static std::string
   DemangleSymbolAsString(llvm::StringRef symbol, DemangleMode mode,
                          const SymbolContext *sc = nullptr,
                          const ExecutionContext *exe_ctx = nullptr);
+
+  static std::pair<std::string, DemangledNameInfo>
+  TrackedDemangleSymbolAsString(llvm::StringRef symbol, DemangleMode mode,
+                                const SymbolContext *sc = nullptr,
+                                const ExecutionContext *exe_ctx = nullptr);
 
   static std::string GetParentNameIfClosure(llvm::StringRef mangled_name);
 
@@ -885,6 +891,11 @@ private:
 
   /// Swift native NSError isa.
   std::optional<lldb::addr_t> m_SwiftNativeNSErrorISA;
+
+  static std::pair<std::string, std::optional<DemangledNameInfo>>
+  DemangleSymbolAsString(llvm::StringRef symbol, DemangleMode mode,
+                         bool tracking, const SymbolContext *sc,
+                         const ExecutionContext *exe_ctx);
 };
 
 /// The target specific register numbers used for async unwinding.
