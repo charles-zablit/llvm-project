@@ -610,6 +610,14 @@ public:
   static bool CreateSettingForCPlusPlusLanguagePlugin(
       Debugger &debugger, const lldb::OptionValuePropertiesSP &properties_sp,
       llvm::StringRef description, bool is_global_property);
+
+  static lldb::OptionValuePropertiesSP
+  GetSettingForSwiftLanguagePlugin(Debugger &debugger,
+                                   llvm::StringRef setting_name);
+
+  static bool CreateSettingForSwiftLanguagePlugin(
+      Debugger &debugger, const lldb::OptionValuePropertiesSP &properties_sp,
+      llvm::StringRef description, bool is_global_property);
 };
 
 } // namespace lldb_private

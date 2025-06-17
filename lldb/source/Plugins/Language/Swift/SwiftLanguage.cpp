@@ -68,7 +68,7 @@ void SwiftLanguage::Initialize() {
   static ConstString g_SwiftStringStorageClass("_TtCs15__StringStorage");
   static ConstString g_NSArrayClass1("_TtCs22__SwiftDeferredNSArray");
   PluginManager::RegisterPlugin(GetPluginNameStatic(), "Swift Language",
-                                CreateInstance);
+                                CreateInstance, &DebuggerInitialize);
 
   lldb_private::formatters::NSString_Additionals::GetAdditionalSummaries()
       .emplace(
@@ -1892,6 +1892,86 @@ SwiftLanguage::GetDemangledFunctionNameWithoutArguments(Mangled mangled) const {
   if (demangled_name)
     return demangled_name;
   return mangled_name;
+}
+
+static std::optional<llvm::StringRef>
+GetDemangledBasename(const SymbolContext &sc) {
+  return std::nullopt;
+}
+
+static std::optional<llvm::StringRef>
+GetDemangledFunctionPrefix(const SymbolContext &sc) {
+  return std::nullopt;
+}
+
+static std::optional<llvm::StringRef>
+GetDemangledFunctionSuffix(const SymbolContext &sc) {
+  return std::nullopt;
+}
+
+static bool PrintDemangledArgumentList(Stream &s, const SymbolContext &sc) {
+  return false;
+}
+
+static VariableListSP GetFunctionVariableList(const SymbolContext &sc) {
+  assert(sc.function);
+
+  if (sc.block)
+    if (Block *inline_block = sc.block->GetContainingInlinedBlock())
+      return inline_block->GetBlockVariableList(true);
+
+  return sc.function->GetBlock(true).GetBlockVariableList(true);
+}
+
+bool SwiftLanguage::HandleFrameFormatVariable(const SymbolContext &sc,
+                                              const ExecutionContext *exe_ctx,
+                                              FormatEntity::Entry::Type type,
+                                              Stream &s) {
+  return false;
+}
+
+#define LLDB_PROPERTIES_language_swift
+#include "LanguageSwiftProperties.inc"
+
+enum {
+#define LLDB_PROPERTIES_language_swift
+#include "LanguageSwiftPropertiesEnum.inc"
+};
+
+namespace {
+class PluginProperties : public Properties {
+public:
+  static llvm::StringRef GetSettingName() { return "display"; }
+
+  PluginProperties() {
+    m_collection_sp = std::make_shared<OptionValueProperties>(GetSettingName());
+    m_collection_sp->Initialize(g_language_swift_properties);
+  }
+
+  FormatEntity::Entry GetFunctionNameFormat() const {
+    return GetPropertyAtIndexAs<const FormatEntity::Entry>(
+        ePropertyFunctionNameFormat, {});
+  }
+};
+} // namespace
+
+static PluginProperties &GetGlobalPluginProperties() {
+  static PluginProperties g_settings;
+  return g_settings;
+}
+
+FormatEntity::Entry SwiftLanguage::GetFunctionNameFormat() const {
+  return GetGlobalPluginProperties().GetFunctionNameFormat();
+}
+
+void SwiftLanguage::DebuggerInitialize(Debugger &debugger) {
+  if (!PluginManager::GetSettingForSwiftLanguagePlugin(
+          debugger, PluginProperties::GetSettingName())) {
+    PluginManager::CreateSettingForSwiftLanguagePlugin(
+        debugger, GetGlobalPluginProperties().GetValueProperties(),
+        "Properties for the Swift language plug-in.",
+        /*is_global_property=*/true);
+  }
 }
 
 namespace {
