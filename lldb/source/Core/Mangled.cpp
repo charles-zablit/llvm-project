@@ -164,7 +164,7 @@ static ConstString GetSwiftDemangledStr(ConstString m_mangled,
       std::max(info.BasenameRange.second, info.ArgumentsRange.second);
   info.SuffixRange.second = demangled.length();
 
-  // Don't cache the demangled name the function isn't available yet.
+  // Don't cache the demangled name if the function isn't available yet.
   if (!sc || !sc->function) {
     LLDB_LOGF(log, "demangle swift: %s -> \"%s\" (not cached)", mangled_name,
               demangled.c_str());
