@@ -18,6 +18,11 @@
 
 using namespace swift::Demangle;
 
+/// A NodePrinter class with range tracking capabilities.
+///
+/// When used instead of a regular NodePrinter, this class will store additional
+/// range information of the demangled name in the `info` attribute, such as the
+/// range of the name of a method.
 class TrackingNodePrinter : public NodePrinter {
 public:
   TrackingNodePrinter(DemangleOptions options) : NodePrinter(options) {}

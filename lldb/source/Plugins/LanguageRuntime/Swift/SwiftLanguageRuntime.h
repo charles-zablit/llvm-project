@@ -201,11 +201,27 @@ public:
 
   enum DemangleMode { eSimplified, eTypeName, eDisplayTypeName };
 
+  /// Demangle a symbol to a string.
+  ///
+  /// \param symbol The mangled symbol to demangle.
+  /// \param mode The `DemangleMode` to use when demangling.
+  /// \param sc The associated `SymbolContext`.
+  /// \param exe_ctx The associated `ExecutionContext`.
+  ///
+  /// \return The demangled symbol.
   static std::string
   DemangleSymbolAsString(llvm::StringRef symbol, DemangleMode mode,
                          const SymbolContext *sc = nullptr,
                          const ExecutionContext *exe_ctx = nullptr);
 
+  /// Demangle a symbol to a string with additional range information.
+  ///
+  /// \param symbol The mangled symbol to demangle.
+  /// \param mode The `DemangleMode` to use when demangling.
+  /// \param sc The associated `SymbolContext`.
+  /// \param exe_ctx The associated `ExecutionContext`.
+  ///
+  /// \return The demangled symbol as well as range tracking information.
   static std::pair<std::string, DemangledNameInfo>
   TrackedDemangleSymbolAsString(llvm::StringRef symbol, DemangleMode mode,
                                 const SymbolContext *sc = nullptr,
