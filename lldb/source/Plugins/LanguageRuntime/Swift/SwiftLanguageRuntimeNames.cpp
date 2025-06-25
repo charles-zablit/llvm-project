@@ -879,7 +879,8 @@ SwiftLanguageRuntime::DemangleSymbolAsString(llvm::StringRef symbol,
   }
   if (tracking) {
     TrackingNodePrinter printer = TrackingNodePrinter(options);
-    swift::Demangle::demangleSymbolAsString(symbol, printer);
+    swift::Demangle::Context ctx;
+    ctx.demangleSymbolAsString(symbol, printer);
     return std::pair<std::string, std::optional<DemangledNameInfo>>(
         printer.takeString(), printer.takeInfo());
   }
