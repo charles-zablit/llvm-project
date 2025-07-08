@@ -1906,37 +1906,34 @@ SwiftLanguage::GetDemangledFunctionNameWithoutArguments(Mangled mangled) const {
   return mangled_name;
 }
 
-static llvm::Expected<std::pair<std::string, DemangledNameInfo>>
+static llvm::Expected<std::pair<llvm::StringRef, DemangledNameInfo>>
 GetAndValidateInfo(const SymbolContext &sc) {
   Mangled mangled = sc.GetPossiblyInlinedFunctionName();
   if (!mangled)
     return llvm::createStringError("Function does not have a mangled name.");
 
-  const char *mangled_name = mangled.GetMangledName().AsCString("");
-  auto [demangled_name, info] =
-      SwiftLanguageRuntime::TrackedDemangleSymbolAsString(
-          mangled_name, SwiftLanguageRuntime::eSimplified, &sc);
-  info.PrefixRange.second =
-      std::min(info.BasenameRange.first, info.ArgumentsRange.first);
-  info.SuffixRange.first =
-      std::max(info.BasenameRange.second, info.ArgumentsRange.second);
-  info.SuffixRange.second = demangled_name.length();
-
+  auto demangled_name =
+      mangled.GetDemangledName(nullptr, Mangled::eCompactName).GetStringRef();
   if (demangled_name.empty())
     return llvm::createStringError(
         "Function '%s' does not have a demangled name.",
         mangled.GetMangledName().AsCString(""));
 
+  const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  if (!info)
+    return llvm::createStringError(
+        "Function '%s' does not have demangled info.", demangled_name.data());
+
   // Function without a basename is nonsense.
-  if (!info.hasBasename())
+  if (!info->hasBasename())
     return llvm::createStringError(
         "DemangledInfo for '%s does not have basename range.",
         demangled_name.data());
 
-  return std::make_pair(demangled_name, info);
+  return std::make_pair(demangled_name, *info);
 }
 
-static llvm::Expected<std::string>
+static llvm::Expected<llvm::StringRef>
 GetDemangledBasename(const SymbolContext &sc) {
   auto info_or_err = GetAndValidateInfo(sc);
   if (!info_or_err)
@@ -1944,12 +1941,11 @@ GetDemangledBasename(const SymbolContext &sc) {
 
   auto [demangled_name, info] = *info_or_err;
 
-  return demangled_name.substr(info.BasenameRange.first,
-                               info.BasenameRange.second -
-                                   info.BasenameRange.first);
+  return demangled_name.slice(info.BasenameRange.first,
+                              info.BasenameRange.second);
 }
 
-static llvm::Expected<std::string>
+static llvm::Expected<llvm::StringRef>
 GetDemangledFunctionPrefix(const SymbolContext &sc) {
   auto info_or_err = GetAndValidateInfo(sc);
   if (!info_or_err)
@@ -1962,11 +1958,10 @@ GetDemangledFunctionPrefix(const SymbolContext &sc) {
         "DemangledInfo for '%s does not have suffix range.",
         demangled_name.data());
 
-  return demangled_name.substr(
-      info.PrefixRange.first, info.PrefixRange.second - info.PrefixRange.first);
+  return demangled_name.slice(info.PrefixRange.first, info.PrefixRange.second);
 }
 
-static llvm::Expected<std::string>
+static llvm::Expected<llvm::StringRef>
 GetDemangledFunctionSuffix(const SymbolContext &sc) {
   auto info_or_err = GetAndValidateInfo(sc);
   if (!info_or_err)
@@ -1979,8 +1974,7 @@ GetDemangledFunctionSuffix(const SymbolContext &sc) {
         "DemangledInfo for '%s does not have suffix range.",
         demangled_name.data());
 
-  return demangled_name.substr(
-      info.SuffixRange.first, info.SuffixRange.second - info.SuffixRange.first);
+  return demangled_name.slice(info.SuffixRange.first, info.SuffixRange.second);
 }
 
 static bool PrintDemangledArgumentList(Stream &s, const SymbolContext &sc) {
@@ -1998,9 +1992,8 @@ static bool PrintDemangledArgumentList(Stream &s, const SymbolContext &sc) {
   if (!info.hasArguments())
     return false;
 
-  s << demangled_name.substr(info.ArgumentsRange.first,
-                             info.ArgumentsRange.second -
-                                 info.ArgumentsRange.first);
+  s << demangled_name.slice(info.ArgumentsRange.first,
+                            info.ArgumentsRange.second);
 
   return true;
 }
