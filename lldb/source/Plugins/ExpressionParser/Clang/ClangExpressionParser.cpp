@@ -664,12 +664,8 @@ static void SetupImportStdModuleLangOpts(CompilerInstance &compiler,
   lang_opts.GNUKeywords = true;
   lang_opts.CPlusPlus11 = true;
 
-  if (auto supported_or_err = sdkSupportsBuiltinModules(target))
-    lang_opts.BuiltinHeadersInSystemModules = !*supported_or_err;
-  else
-    LLDB_LOG_ERROR(log, supported_or_err.takeError(),
-                   "Failed to determine BuiltinHeadersInSystemModules when "
-                   "setting up import-std-module: {0}");
+  lang_opts.BuiltinHeadersInSystemModules =
+      false; // TODO: Revert this change before merging
 
   // The Darwin libc expects this macro to be set.
   lang_opts.GNUCVersion = 40201;
