@@ -113,6 +113,18 @@ void Host::SystemLog(Severity severity, llvm::StringRef message) {
 #endif
 #endif
 
+void Host::SystemLogFallback(Severity severity, llvm::StringRef message) {
+  switch (severity) {
+  case lldb::eSeverityInfo:
+  case lldb::eSeverityWarning:
+    llvm::outs() << message;
+    return;
+  case lldb::eSeverityError:
+    llvm::errs() << message;
+    return;
+  }
+}
+
 #if !defined(__APPLE__) && !defined(_WIN32)
 static thread_result_t
 MonitorChildProcessThreadFunction(::pid_t pid,

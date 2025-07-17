@@ -308,7 +308,7 @@ Environment Host::GetEnvironment() {
 
 class WindowsEventLog {
 public:
-  WindowsEventLog() { handle = RegisterEventSource(nullptr, L"LLDB"); }
+  WindowsEventLog() : handle(RegisterEventSource(nullptr, L"lldb")) {}
 
   ~WindowsEventLog() {
     if (handle)
@@ -323,36 +323,30 @@ private:
 
 static llvm::ManagedStatic<WindowsEventLog> event_log;
 
-static LPCWSTR AnsiToUtf16(const char *ansi) {
-  if (!ansi)
+static LPCWSTR AnsiToUtf16(const std::string &ansi) {
+  if (ansi.empty())
     return nullptr;
-  const int length = strlen(ansi);
   const int unicode_length =
-      MultiByteToWideChar(CP_ACP, 0, ansi, length, nullptr, 0);
-  WCHAR *unicode = new WCHAR[unicode_length + 1];
-  MultiByteToWideChar(CP_ACP, 0, ansi, length, unicode, unicode_length);
-  unicode[unicode_length] = 0;
+      MultiByteToWideChar(CP_ACP, 0, ansi.c_str(), -1, nullptr, 0);
+  WCHAR *unicode = new WCHAR[unicode_length];
+  MultiByteToWideChar(CP_ACP, 0, ansi.c_str(), -1, unicode, unicode_length);
   return unicode;
 }
 
 void Host::SystemLog(Severity severity, llvm::StringRef message) {
   HANDLE h = event_log->GetHandle();
-  LPCWSTR wide_message = AnsiToUtf16(message.str().c_str());
+  if (!h) {
+    SystemLogFallback(severity, message);
+    return;
+  }
 
-  if (!h || !wide_message) {
-    switch (severity) {
-    case lldb::eSeverityInfo:
-    case lldb::eSeverityWarning:
-      llvm::outs() << message;
-      return;
-    case lldb::eSeverityError:
-      llvm::errs() << message;
-      return;
-    }
+  LPCWSTR wide_message = AnsiToUtf16(message.str());
+  if (!wide_message) {
+    SystemLogFallback(severity, message);
+    return;
   }
 
   WORD event_type;
-
   switch (severity) {
   case lldb::eSeverityWarning:
     event_type = EVENTLOG_WARNING_TYPE;
