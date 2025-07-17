@@ -22,10 +22,13 @@
 #include "lldb/Utility/StreamString.h"
 #include "lldb/Utility/StructuredData.h"
 
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ConvertUTF.h"
+#include "llvm/Support/ManagedStatic.h"
 
 // Windows includes
 #include <tlhelp32.h>
+#include <windows.h>
 
 using namespace lldb;
 using namespace lldb_private;
@@ -301,4 +304,62 @@ Environment Host::GetEnvironment() {
     environment_block += current_var_size;
   }
   return env;
+}
+
+class WindowsEventLog {
+public:
+  WindowsEventLog() { handle = RegisterEventSource(nullptr, L"LLDB"); }
+
+  ~WindowsEventLog() {
+    if (handle)
+      DeregisterEventSource(handle);
+  }
+
+  HANDLE GetHandle() const { return handle; }
+
+private:
+  HANDLE handle;
+};
+
+static llvm::ManagedStatic<WindowsEventLog> event_log;
+
+static LPCWSTR AnsiToUtf16(const char *ansi) {
+  if (!ansi)
+    return nullptr;
+  const int length = strlen(ansi);
+  const int unicode_length =
+      MultiByteToWideChar(CP_ACP, 0, ansi, length, nullptr, 0);
+  WCHAR *unicode = new WCHAR[unicode_length + 1];
+  MultiByteToWideChar(CP_ACP, 0, ansi, length, unicode, unicode_length);
+  unicode[unicode_length] = 0;
+  return unicode;
+}
+
+void Host::SystemLog(Severity severity, llvm::StringRef message) {
+  HANDLE h = event_log->GetHandle();
+  LPCWSTR wide_message = AnsiToUtf16(message.str().c_str());
+
+  if (!h || !wide_message) {
+    SystemLogFallback(severity, message);
+    return;
+  }
+
+  WORD event_type;
+  WORD event_id;
+
+  switch (severity) {
+  case lldb::eSeverityWarning:
+    event_type = EVENTLOG_WARNING_TYPE;
+    break;
+  case lldb::eSeverityError:
+    event_type = EVENTLOG_ERROR_TYPE;
+    break;
+  case lldb::eSeverityInfo:
+  default:
+    event_type = EVENTLOG_INFORMATION_TYPE;
+  }
+
+  ReportEventW(h, event_type, 0, 0, nullptr, 1, 0, &wide_message, nullptr);
+
+  delete[] wide_message;
 }
