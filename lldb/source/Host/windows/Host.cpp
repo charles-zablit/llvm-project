@@ -340,8 +340,15 @@ void Host::SystemLog(Severity severity, llvm::StringRef message) {
   LPCWSTR wide_message = AnsiToUtf16(message.str().c_str());
 
   if (!h || !wide_message) {
-    SystemLogFallback(severity, message);
-    return;
+    switch (severity) {
+    case lldb::eSeverityInfo:
+    case lldb::eSeverityWarning:
+      llvm::outs() << message;
+      return;
+    case lldb::eSeverityError:
+      llvm::errs() << message;
+      return;
+    }
   }
 
   WORD event_type;
