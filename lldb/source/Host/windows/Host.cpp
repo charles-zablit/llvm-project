@@ -352,7 +352,6 @@ void Host::SystemLog(Severity severity, llvm::StringRef message) {
   }
 
   WORD event_type;
-  WORD event_id;
 
   switch (severity) {
   case lldb::eSeverityWarning:
