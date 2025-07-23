@@ -59,6 +59,11 @@ struct DemangledNameInfo {
   /// \endcode
   std::pair<size_t, size_t> QualifiersRange;
 
+  /// Indicates the [start, end) of the function's name qualifiers. This is a
+  /// catch-all range for anything in between the basename and the arguments,
+  /// that is not tracked by the rest of the pairs.
+  std::pair<size_t, size_t> NameQualifiersRange;
+
   /// Indicates the [start, end) of the function's prefix. This is a
   /// catch-all range for anything that is not tracked by the rest of
   /// the pairs.
@@ -86,6 +91,11 @@ struct DemangledNameInfo {
   /// Returns \c true if this object holds a valid qualifiers range.
   bool hasQualifiers() const {
     return QualifiersRange.second >= QualifiersRange.first;
+  }
+
+  /// Returns \c true if this object holds a valid name qualifiers range.
+  bool hasNameQualifiers() const {
+    return NameQualifiersRange.second >= NameQualifiersRange.first;
   }
 
   /// Returns \c true if this object holds a valid prefix range.

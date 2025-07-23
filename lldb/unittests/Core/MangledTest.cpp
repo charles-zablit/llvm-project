@@ -615,6 +615,7 @@ INSTANTIATE_TEST_SUITE_P(DemanglingPartsTests, DemanglingPartsTestFixture,
 struct DemangledNameInfoTestCase {
   DemangledNameInfo expected_info;
   bool valid_basename;
+  bool valid_name_qualifiers;
   bool valid_scope;
   bool valid_arguments;
   bool valid_qualifiers;
@@ -624,48 +625,76 @@ struct DemangledNameInfoTestCase {
 
 DemangledNameInfoTestCase g_demangled_name_info_test_cases[] = {
     // clang-format off
-   {
-    { /*.BasenameRange=*/{0, 10}, /*.ScopeRange=*/{1, 0}, /*.ArgumentsRange=*/{1, 0},
-      /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{1, 0}, /*.SuffixRange=*/{1, 0}
+  {
+    {
+      /*.BasenameRange=*/{0, 10}, /*.NameQualifiersRange=*/{1, 0}, /*.ScopeRange=*/{1, 0},
+      /*.ArgumentsRange=*/{1, 0}, /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{1, 0},
+      /*.SuffixRange=*/{1, 0}
     },
-      /*valid_basename=*/true, /*valid_scope=*/false, /*valid_arguments=*/false,
-      /*valid_qualifiers=*/false, /*valid_prefix=*/false, /*valid_suffix=*/false,
-   },
-   {
-    { /*.BasenameRange=*/{1, 0}, /*.ScopeRange=*/{0, 10}, /*.ArgumentsRange=*/{1, 0},
-      /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{1, 0}, /*.SuffixRange=*/{1, 0}
+    /*valid_basename=*/true, /*valid_name_qualifiers=*/false, /*valid_scope=*/false,
+    /*valid_arguments=*/false, /*valid_qualifiers=*/false, /*valid_prefix=*/false,
+    /*valid_suffix=*/false,
+  },
+  {
+    {
+      /*.BasenameRange=*/{1, 0}, /*.NameQualifiersRange=*/{0, 10}, /*.ScopeRange=*/{1, 0},
+      /*.ArgumentsRange=*/{1, 0}, /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{1, 0},
+      /*.SuffixRange=*/{1, 0}
     },
-      /*valid_basename=*/false, /*valid_scope=*/true, /*valid_arguments=*/false,
-      /*valid_qualifiers=*/false, /*valid_prefix=*/false, /*valid_suffix=*/false,
-   },
-   {
-    { /*.BasenameRange=*/{1, 0}, /*.ScopeRange=*/{1, 0}, /*.ArgumentsRange=*/{0, 10},
-      /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{1, 0}, /*.SuffixRange=*/{1, 0}
+    /*valid_basename=*/false, /*valid_name_qualifiers=*/true, /*valid_scope=*/false,
+    /*valid_arguments=*/false, /*valid_qualifiers=*/false, /*valid_prefix=*/false,
+    /*valid_suffix=*/false,
+  },
+  {
+    {
+      /*.BasenameRange=*/{1, 0}, /*.NameQualifiersRange=*/{1, 0}, /*.ScopeRange=*/{0, 10},
+      /*.ArgumentsRange=*/{1, 0}, /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{1, 0},
+      /*.SuffixRange=*/{1, 0}
     },
-      /*valid_basename=*/false, /*valid_scope=*/false, /*valid_arguments=*/true,
-      /*valid_qualifiers=*/false, /*valid_prefix=*/false, /*valid_suffix=*/false,
-   },
-   {
-    { /*.BasenameRange=*/{1, 0}, /*.ScopeRange=*/{1, 0}, /*.ArgumentsRange=*/{1, 0},
-      /*.QualifiersRange=*/{0, 10}, /*.PrefixRange=*/{1, 0}, /*.SuffixRange=*/{1, 0}
+    /*valid_basename=*/false, /*valid_name_qualifiers=*/false, /*valid_scope=*/true,
+    /*valid_arguments=*/false, /*valid_qualifiers=*/false, /*valid_prefix=*/false,
+    /*valid_suffix=*/false,
+  },
+  {
+    {
+      /*.BasenameRange=*/{1, 0}, /*.NameQualifiersRange=*/{1, 0}, /*.ScopeRange=*/{1, 0},
+      /*.ArgumentsRange=*/{0, 10}, /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{1, 0},
+      /*.SuffixRange=*/{1, 0}
     },
-      /*valid_basename=*/false, /*valid_scope=*/false, /*valid_arguments=*/false,
-      /*valid_qualifiers=*/true, /*valid_prefix=*/false, /*valid_suffix=*/false,
-   },
-   {
-    { /*.BasenameRange=*/{1, 0}, /*.ScopeRange=*/{1, 0}, /*.ArgumentsRange=*/{1, 0},
-      /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{0, 10}, /*.SuffixRange=*/{1, 0}
+    /*valid_basename=*/false, /*valid_name_qualifiers=*/false, /*valid_scope=*/false,
+    /*valid_arguments=*/true, /*valid_qualifiers=*/false, /*valid_prefix=*/false,
+    /*valid_suffix=*/false,
+  },
+  {
+    {
+      /*.BasenameRange=*/{1, 0}, /*.NameQualifiersRange=*/{1, 0}, /*.ScopeRange=*/{1, 0},
+      /*.ArgumentsRange=*/{1, 0}, /*.QualifiersRange=*/{0, 10}, /*.PrefixRange=*/{1, 0},
+      /*.SuffixRange=*/{1, 0}
     },
-      /*valid_basename=*/false, /*valid_scope=*/false, /*valid_arguments=*/false,
-      /*valid_qualifiers=*/false, /*valid_prefix=*/true, /*valid_suffix=*/false,
-   },
-   {
-    { /*.BasenameRange=*/{1, 0}, /*.ScopeRange=*/{1, 0}, /*.ArgumentsRange=*/{1, 0},
-      /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{1, 0}, /*.SuffixRange=*/{0, 10}
+    /*valid_basename=*/false, /*valid_name_qualifiers=*/false, /*valid_scope=*/false,
+    /*valid_arguments=*/false, /*valid_qualifiers=*/true, /*valid_prefix=*/false,
+    /*valid_suffix=*/false,
+  },
+  {
+    {
+      /*.BasenameRange=*/{1, 0}, /*.NameQualifiersRange=*/{1, 0}, /*.ScopeRange=*/{1, 0},
+      /*.ArgumentsRange=*/{1, 0}, /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{0, 10},
+      /*.SuffixRange=*/{1, 0}
     },
-      /*valid_basename=*/false, /*valid_scope=*/false, /*valid_arguments=*/false,
-      /*valid_qualifiers=*/false, /*valid_prefix=*/false, /*valid_suffix=*/true,
-   },
+    /*valid_basename=*/false, /*valid_name_qualifiers=*/false, /*valid_scope=*/false,
+    /*valid_arguments=*/false, /*valid_qualifiers=*/false, /*valid_prefix=*/true,
+    /*valid_suffix=*/false,
+  },
+  {
+    {
+      /*.BasenameRange=*/{1, 0}, /*.NameQualifiersRange=*/{1, 0}, /*.ScopeRange=*/{1, 0},
+      /*.ArgumentsRange=*/{1, 0}, /*.QualifiersRange=*/{1, 0}, /*.PrefixRange=*/{1, 0},
+      /*.SuffixRange=*/{0, 10}
+    },
+    /*valid_basename=*/false, /*valid_name_qualifiers=*/false, /*valid_scope=*/false,
+    /*valid_arguments=*/false, /*valid_qualifiers=*/false, /*valid_prefix=*/false,
+    /*valid_suffix=*/true,
+  },
     // clang-format on
 };
 
@@ -673,10 +702,12 @@ struct DemangledNameInfoTestFixture
     : public ::testing::TestWithParam<DemangledNameInfoTestCase> {};
 
 TEST_P(DemangledNameInfoTestFixture, DemangledNameInfoRanges) {
-  const auto &[info, valid_basename, valid_scope, valid_arguments,
-               valid_qualifiers, valid_prefix, valid_suffix] = GetParam();
+  const auto &[info, valid_basename, valid_name_qualifiers, valid_scope,
+               valid_arguments, valid_qualifiers, valid_prefix, valid_suffix] =
+      GetParam();
 
   ASSERT_EQ(info.hasBasename(), valid_basename);
+  ASSERT_EQ(info.hasNameQualifiers(), valid_name_qualifiers);
   ASSERT_EQ(info.hasScope(), valid_scope);
   ASSERT_EQ(info.hasArguments(), valid_arguments);
   ASSERT_EQ(info.hasQualifiers(), valid_qualifiers);

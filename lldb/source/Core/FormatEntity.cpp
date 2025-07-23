@@ -113,6 +113,7 @@ constexpr Definition g_frame_child_entries[] = {
 constexpr Definition g_function_child_entries[] = {
     Definition("id", EntryType::FunctionID),
     Definition("name", EntryType::FunctionName),
+    Definition("name-qualifiers", EntryType::FunctionNameQualifiers),
     Definition("name-without-args", EntryType::FunctionNameNoArgs),
     Definition("name-with-args", EntryType::FunctionNameWithArgs),
     Definition("mangled-name", EntryType::FunctionMangledName),
@@ -384,6 +385,7 @@ const char *FormatEntity::Entry::TypeToCString(Type t) {
     ENUM_TO_CSTR(FunctionDidChange);
     ENUM_TO_CSTR(FunctionInitialFunction);
     ENUM_TO_CSTR(FunctionName);
+    ENUM_TO_CSTR(FunctionNameQualifiers);
     ENUM_TO_CSTR(FunctionNameWithArgs);
     ENUM_TO_CSTR(FunctionNameNoArgs);
     ENUM_TO_CSTR(FunctionMangledName);
@@ -1852,6 +1854,7 @@ bool FormatEntity::Format(const Entry &entry, Stream &s,
   case Entry::Type::FunctionPrefix:
   case Entry::Type::FunctionScope:
   case Entry::Type::FunctionBasename:
+  case Entry::Type::FunctionNameQualifiers:
   case Entry::Type::FunctionTemplateArguments:
   case Entry::Type::FunctionFormattedArguments:
   case Entry::Type::FunctionReturnRight:
