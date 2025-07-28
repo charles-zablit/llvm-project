@@ -1953,6 +1953,20 @@ bool CPlusPlusLanguage::HandleFrameFormatVariable(
     return true;
   }
 
+  case FormatEntity::Entry::Type::FunctionNameQualifiers: {
+    auto name_or_err = GetDemangledBasename(sc);
+    if (!name_or_err) {
+      LLDB_LOG_ERROR(GetLog(LLDBLog::Language), name_or_err.takeError(),
+                     "Failed to handle ${{function.name-qualifiers}} "
+                     "frame-format variable: {0}");
+      return false;
+    }
+
+    s << *name_or_err;
+
+    return true;
+  }
+
   case FormatEntity::Entry::Type::FunctionTemplateArguments: {
     auto template_args_or_err = GetDemangledTemplateArguments(sc);
     if (!template_args_or_err) {

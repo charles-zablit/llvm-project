@@ -30,6 +30,16 @@ struct DemangledNameInfo {
   /// \endcode
   std::pair<size_t, size_t> BasenameRange;
 
+  /// A [start, end) pair for the function template arguments.
+  /// The basename is the name without scope qualifiers
+  /// and without template parameters. E.g.,
+  /// \code{.cpp}
+  ///    void foo::bar<int>::someFunc<float>(int) const &&
+  ///                                ^     ^
+  ///                              start  end
+  /// \endcode
+  std::pair<size_t, size_t> TemplateRange;
+
   /// A [start, end) pair for the function scope qualifiers.
   /// E.g., for
   /// \code{.cpp}
@@ -78,6 +88,11 @@ struct DemangledNameInfo {
   bool hasBasename() const {
     // A function always has a name.
     return BasenameRange.second > BasenameRange.first;
+  }
+
+  /// Returns \c true if this object holds a valid template range.
+  bool hasTemplate() const {
+    return TemplateRange.second >= TemplateRange.first;
   }
 
   /// Returns \c true if this object holds a valid scope range.

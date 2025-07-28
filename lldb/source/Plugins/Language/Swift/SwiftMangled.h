@@ -32,6 +32,7 @@ public:
 private:
   lldb_private::DemangledNameInfo info;
   std::optional<unsigned> parametersDepth;
+  std::optional<unsigned> genericsSignatureDepth;
 
   void startName() {
     if (!info.hasBasename())
@@ -41,6 +42,23 @@ private:
   void endName() {
     if (!info.hasBasename())
       info.BasenameRange.second = getStreamLength();
+  }
+
+  void startGenericSignature(unsigned depth) {
+    if (genericsSignatureDepth || !info.hasBasename() ||
+        info.TemplateRange.first < info.TemplateRange.second) {
+      return;
+    }
+    info.TemplateRange.first = getStreamLength();
+    genericsSignatureDepth = depth;
+  }
+
+  void endGenericSignature(unsigned depth) {
+    if (!genericsSignatureDepth || *genericsSignatureDepth != depth ||
+        info.TemplateRange.first < info.TemplateRange.second) {
+      return;
+    }
+    info.TemplateRange.second = getStreamLength();
   }
 
   void startParameters(unsigned depth) {
@@ -83,6 +101,12 @@ private:
                                    MultiWordName, ExtraIndex, Entity, depth);
     if (shouldTrackNameRange(Entity))
       endName();
+  }
+
+  void printGenericSignature(NodePointer Node, unsigned depth) override {
+    startGenericSignature(depth);
+    NodePrinter::printGenericSignature(Node, depth);
+    endGenericSignature(depth);
   }
 
   void printFunctionParameters(NodePointer LabelList, NodePointer ParameterType,

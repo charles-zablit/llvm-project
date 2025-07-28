@@ -173,6 +173,15 @@ GetSwiftDemangledStr(ConstString m_mangled, const SymbolContext *sc,
   info.SuffixRange.first =
       std::max(info.BasenameRange.second, info.ArgumentsRange.second);
   info.SuffixRange.second = demangled.length();
+  if (info.hasBasename() && info.hasArguments()) {
+    if (info.hasTemplate()) {
+      info.NameQualifiersRange.second =
+          std::min(info.ArgumentsRange.first, info.TemplateRange.first);
+    } else {
+      info.NameQualifiersRange.second = info.ArgumentsRange.first;
+    }
+    info.NameQualifiersRange.first = info.BasenameRange.second;
+  }
 
   // Don't cache the demangled name if the function isn't available yet.
   // Only cache eFullName demangled functions to keep the cache consistent.
