@@ -88,8 +88,7 @@ int __pthread_fchdir(int fildes);
 using namespace lldb;
 using namespace lldb_private;
 
-#if !defined(__APPLE__)
-#if !defined(_WIN32)
+#if !defined(__APPLE__) && !defined(_WIN32)
 #include <syslog.h>
 void Host::SystemLog(Severity severity, llvm::StringRef message) {
   static llvm::once_flag g_openlog_once;
@@ -110,19 +109,6 @@ void Host::SystemLog(Severity severity, llvm::StringRef message) {
   }
   syslog(level, "%s", message.data());
 }
-#else
-void Host::SystemLog(Severity severity, llvm::StringRef message) {
-  switch (severity) {
-  case lldb::eSeverityInfo:
-  case lldb::eSeverityWarning:
-    llvm::outs() << message;
-    break;
-  case lldb::eSeverityError:
-    llvm::errs() << message;
-    break;
-  }
-}
-#endif
 #endif
 
 #if !defined(__APPLE__) && !defined(_WIN32)
