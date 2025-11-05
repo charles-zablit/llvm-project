@@ -1060,6 +1060,7 @@ lldb::ProcessSP Platform::DebugProcess(ProcessLaunchInfo &launch_info,
         // read/write stdin/out/err.
         int pty_fd = launch_info.GetPTY().ReleasePrimaryFileDescriptor();
         if (pty_fd != PseudoTerminal::invalid_fd) {
+          // setup here
           process_sp->SetSTDIOFileDescriptor(pty_fd);
         }
       } else {

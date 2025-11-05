@@ -512,6 +512,10 @@ static llvm::Error serveConnection(
 }
 
 int main(int argc, char *argv[]) {
+  bool start = false;
+  while(start) {
+    
+  }
   llvm::InitLLVM IL(argc, argv, /*InstallPipeSignalExitHandler=*/false);
 #if !defined(__APPLE__)
   llvm::setBugReportMsg("PLEASE submit a bug report to " LLDB_BUG_REPORT_URL

@@ -173,10 +173,15 @@ public:
   ///     if the secondary file descriptor is not currently valid.
   int ReleaseSecondaryFileDescriptor();
 
+  void* GetPseudoTerminalHandle();
+
 protected:
   // Member variables
   int m_primary_fd = invalid_fd;   ///< The file descriptor for the primary.
   int m_secondary_fd = invalid_fd; ///< The file descriptor for the secondary.
+  void* m_conpty_handle = (void*)(unsigned long long)-1;
+  void* m_pseudo_term_out_read = (void*)(unsigned long long)-1;
+  void* m_conpty_output = (void*)(unsigned long long)-1;
 
 private:
   PseudoTerminal(const PseudoTerminal &) = delete;

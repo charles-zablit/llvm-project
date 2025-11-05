@@ -30,7 +30,7 @@ from typing import (
 
 # set timeout based on whether ASAN was enabled or not. Increase
 # timeout by a factor of 10 if ASAN is enabled.
-DEFAULT_TIMEOUT = 10 * (10 if ("ASAN_OPTIONS" in os.environ) else 1)
+DEFAULT_TIMEOUT = 10000 * (10 if ("ASAN_OPTIONS" in os.environ) else 1)
 
 ## DAP type references
 

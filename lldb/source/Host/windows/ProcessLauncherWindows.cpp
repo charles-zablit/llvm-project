@@ -59,6 +59,28 @@ static bool GetFlattenedWindowsCommandString(Args args, std::wstring &command) {
   return true;
 }
 
+HRESULT InitializeStartupInfoAttachedToConPTY(STARTUPINFOEXW *siEx, HPCON hPC) {
+  HRESULT hr = E_UNEXPECTED;
+  size_t size = 0;
+
+  siEx->StartupInfo.cb = sizeof(STARTUPINFOEXW);
+
+  // Create the appropriately sized thread attribute list
+  InitializeProcThreadAttributeList(NULL, 1, 0, &size);
+  siEx->lpAttributeList =
+      reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(malloc(size));
+  if (InitializeProcThreadAttributeList(siEx->lpAttributeList, 1, 0, &size)) {
+    hr = UpdateProcThreadAttribute(siEx->lpAttributeList, 0,
+                                   PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hPC,
+                                   sizeof(HPCON), NULL, NULL)
+             ? S_OK
+             : HRESULT_FROM_WIN32(GetLastError());
+  } else {
+    hr = HRESULT_FROM_WIN32(GetLastError());
+  }
+  return hr;
+}
+
 HostProcess
 ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
                                       Status &error) {
@@ -66,88 +88,18 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
 
   std::string executable;
   std::vector<char> environment;
-  STARTUPINFOEX startupinfoex = {};
-  STARTUPINFO &startupinfo = startupinfoex.StartupInfo;
+  STARTUPINFOEXW startupinfoex = {};
+  STARTUPINFOW &startupinfo = startupinfoex.StartupInfo;
   PROCESS_INFORMATION pi = {};
 
-  HANDLE stdin_handle = GetStdioHandle(launch_info, STDIN_FILENO);
-  HANDLE stdout_handle = GetStdioHandle(launch_info, STDOUT_FILENO);
-  HANDLE stderr_handle = GetStdioHandle(launch_info, STDERR_FILENO);
-  auto close_handles = llvm::make_scope_exit([&] {
-    if (stdin_handle)
-      ::CloseHandle(stdin_handle);
-    if (stdout_handle)
-      ::CloseHandle(stdout_handle);
-    if (stderr_handle)
-      ::CloseHandle(stderr_handle);
-  });
-
-  startupinfo.cb = sizeof(startupinfoex);
-  startupinfo.dwFlags |= STARTF_USESTDHANDLES;
-  startupinfo.hStdError =
-      stderr_handle ? stderr_handle : ::GetStdHandle(STD_ERROR_HANDLE);
-  startupinfo.hStdInput =
-      stdin_handle ? stdin_handle : ::GetStdHandle(STD_INPUT_HANDLE);
-  startupinfo.hStdOutput =
-      stdout_handle ? stdout_handle : ::GetStdHandle(STD_OUTPUT_HANDLE);
-
   std::vector<HANDLE> inherited_handles;
-  if (startupinfo.hStdError)
-    inherited_handles.push_back(startupinfo.hStdError);
-  if (startupinfo.hStdInput)
-    inherited_handles.push_back(startupinfo.hStdInput);
-  if (startupinfo.hStdOutput)
-    inherited_handles.push_back(startupinfo.hStdOutput);
-
-  SIZE_T attributelist_size = 0;
-  InitializeProcThreadAttributeList(/*lpAttributeList=*/nullptr,
-                                    /*dwAttributeCount=*/1, /*dwFlags=*/0,
-                                    &attributelist_size);
-
-  startupinfoex.lpAttributeList =
-      static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(malloc(attributelist_size));
-  auto free_attributelist =
-      llvm::make_scope_exit([&] { free(startupinfoex.lpAttributeList); });
-  if (!InitializeProcThreadAttributeList(startupinfoex.lpAttributeList,
-                                         /*dwAttributeCount=*/1, /*dwFlags=*/0,
-                                         &attributelist_size)) {
-    error = Status(::GetLastError(), eErrorTypeWin32);
-    return HostProcess();
-  }
-  auto delete_attributelist = llvm::make_scope_exit(
-      [&] { DeleteProcThreadAttributeList(startupinfoex.lpAttributeList); });
-  for (size_t i = 0; i < launch_info.GetNumFileActions(); ++i) {
-    const FileAction *act = launch_info.GetFileActionAtIndex(i);
-    if (act->GetAction() == FileAction::eFileActionDuplicate &&
-        act->GetFD() == act->GetActionArgument())
-      inherited_handles.push_back(reinterpret_cast<HANDLE>(act->GetFD()));
-  }
-  if (!inherited_handles.empty()) {
-    if (!UpdateProcThreadAttribute(
-            startupinfoex.lpAttributeList, /*dwFlags=*/0,
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited_handles.data(),
-            inherited_handles.size() * sizeof(HANDLE),
-            /*lpPreviousValue=*/nullptr, /*lpReturnSize=*/nullptr)) {
-      error = Status(::GetLastError(), eErrorTypeWin32);
-      return HostProcess();
-    }
-  }
-
-  const char *hide_console_var =
-      getenv("LLDB_LAUNCH_INFERIORS_WITHOUT_CONSOLE");
-  if (hide_console_var &&
-      llvm::StringRef(hide_console_var).equals_insensitive("true")) {
-    startupinfo.dwFlags |= STARTF_USESHOWWINDOW;
-    startupinfo.wShowWindow = SW_HIDE;
-  }
-
-  DWORD flags = CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT |
-                EXTENDED_STARTUPINFO_PRESENT;
+  PseudoTerminal &pty = launch_info.GetPTY();
+  HPCON hPC = pty.GetPseudoTerminalHandle();
+  DWORD flags = 0;
+  flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
   if (launch_info.GetFlags().Test(eLaunchFlagDebug))
     flags |= DEBUG_ONLY_THIS_PROCESS;
-
-  if (launch_info.GetFlags().Test(eLaunchFlagDisableSTDIO))
-    flags &= ~CREATE_NEW_CONSOLE;
+  InitializeStartupInfoAttachedToConPTY(&startupinfoex, hPC);
 
   LPVOID env_block = nullptr;
   ::CreateEnvironmentBuffer(launch_info.GetEnvironment(), environment);
@@ -166,11 +118,17 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
   // command line is not empty, its contents may be modified by CreateProcessW.
   WCHAR *pwcommandLine = wcommandLine.empty() ? nullptr : &wcommandLine[0];
 
+  // BOOL result = ::CreateProcessW(
+  //     wexecutable.c_str(), pwcommandLine, NULL, NULL,
+  //     /*bInheritHandles=*/!inherited_handles.empty(), flags, env_block,
+  //     wworkingDirectory.size() == 0 ? NULL : wworkingDirectory.c_str(),
+  //     reinterpret_cast<STARTUPINFO *>(&startupinfoex), &pi);
+
   BOOL result = ::CreateProcessW(
       wexecutable.c_str(), pwcommandLine, NULL, NULL,
-      /*bInheritHandles=*/!inherited_handles.empty(), flags, env_block,
+      /*bInheritHandles=*/!inherited_handles.empty(), flags, NULL,
       wworkingDirectory.size() == 0 ? NULL : wworkingDirectory.c_str(),
-      reinterpret_cast<STARTUPINFO *>(&startupinfoex), &pi);
+      &startupinfo, &pi);
 
   if (!result) {
     // Call GetLastError before we make any other system calls.

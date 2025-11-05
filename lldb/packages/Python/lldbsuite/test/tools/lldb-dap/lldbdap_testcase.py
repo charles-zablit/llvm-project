@@ -552,7 +552,7 @@ class DAPTestCaseBase(TestBase):
         """
         self.build_and_create_debug_adapter(lldbDAPEnv)
         self.assertTrue(os.path.exists(program), "executable must exist")
-
+        # breakpoint()
         return self.launch(program, **kwargs)
 
     def getBuiltinDebugServerTool(self):

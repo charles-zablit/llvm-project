@@ -11,6 +11,7 @@
 #include "lldb/Host/FileSystem.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/Errno.h"
+#include "lldb/Host/windows/windows.h"
 #include <cassert>
 #include <climits>
 #include <cstdio>
@@ -84,7 +85,42 @@ llvm::Error PseudoTerminal::OpenFirstAvailablePrimary(int oflag) {
 
   return llvm::Error::success();
 #else
-  return llvm::errorCodeToError(llvm::errc::not_supported);
+  HRESULT hr;
+  HANDLE hInputRead = INVALID_HANDLE_VALUE;
+  HANDLE hInputWrite = INVALID_HANDLE_VALUE;
+  HANDLE hOutputRead = INVALID_HANDLE_VALUE;
+  HANDLE hOutputWrite = INVALID_HANDLE_VALUE;
+
+  if (!CreatePipe(&hInputRead, &hInputWrite, NULL, 0))
+    return llvm::errorCodeToError(std::error_code(GetLastError(), std::system_category()));
+
+  if (!CreatePipe(&hOutputRead, &hOutputWrite, NULL, 0)) {
+    CloseHandle(hInputRead);
+    CloseHandle(hInputWrite);
+    return llvm::errorCodeToError(std::error_code(GetLastError(), std::system_category()));
+  }
+
+  COORD consoleSize{80, 25};
+  HPCON hPC = INVALID_HANDLE_VALUE;
+  hr = CreatePseudoConsole(consoleSize, hInputRead, hOutputWrite, 0, &hPC);
+  CloseHandle(hInputRead);
+  CloseHandle(hOutputWrite);
+
+  if (FAILED(hr)) {
+    CloseHandle(hInputWrite);
+    CloseHandle(hOutputRead);
+    return llvm::make_error<llvm::StringError>(
+        "Failed to create Windows ConPTY pseudo terminal",
+        llvm::errc::io_error);
+  }
+
+  // Save handles for later use in this class
+  m_conpty_handle = hPC;
+  m_primary_fd = _open_osfhandle(reinterpret_cast<intptr_t>(hOutputRead), _O_RDONLY);
+  // m_pseudo_term_out_read = hOutputRead;
+  // m_conpty_output = hOutputRead;
+
+  return llvm::Error::success();
 #endif
 }
 
@@ -215,3 +251,5 @@ int PseudoTerminal::ReleaseSecondaryFileDescriptor() {
   m_secondary_fd = invalid_fd;
   return fd;
 }
+
+HPCON PseudoTerminal::GetPseudoTerminalHandle() { return m_conpty_handle; };

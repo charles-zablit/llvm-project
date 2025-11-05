@@ -496,6 +496,7 @@ ProcessSP PlatformWindows::DebugProcess(ProcessLaunchInfo &launch_info,
   // plugin, and PlatformWindows::DebugProcess is just a pass-through to get to
   // the process plugin.
 
+  Log *log = GetLog(LLDBLog::Platform);
   if (IsRemote()) {
     if (m_remote_platform_sp)
       return m_remote_platform_sp->DebugProcess(launch_info, debugger, target,
@@ -519,8 +520,50 @@ ProcessSP PlatformWindows::DebugProcess(ProcessLaunchInfo &launch_info,
 
   // We need to launch and attach to the process.
   launch_info.GetFlags().Set(eLaunchFlagDebug);
-  if (process_sp)
-    error = process_sp->Launch(launch_info);
+  if (!process_sp)
+    return process_sp;
+  error = process_sp->Launch(launch_info);
+  if (error.Success()) {
+    LLDB_LOGF(log,
+              "Platform::%s LaunchProcess() call succeeded (pid=%" PRIu64 ")",
+              __FUNCTION__, launch_info.GetProcessID());
+    if (launch_info.GetProcessID() != LLDB_INVALID_PROCESS_ID) {
+      ProcessAttachInfo attach_info(launch_info);
+      process_sp = Attach(attach_info, debugger, &target, error);
+      if (process_sp) {
+        LLDB_LOG(log, "Attach() succeeded, Process plugin: {0}",
+                 process_sp->GetPluginName());
+        launch_info.SetHijackListener(attach_info.GetHijackListener());
+
+        // Since we attached to the process, it will think it needs to detach
+        // if the process object just goes away without an explicit call to
+        // Process::Kill() or Process::Detach(), so let it know to kill the
+        // process if this happens.
+        process_sp->SetShouldDetach(false);
+
+        // If we didn't have any file actions, the pseudo terminal might have
+        // been used where the secondary side was given as the file to open for
+        // stdin/out/err after we have already opened the primary so we can
+        // read/write stdin/out/err.
+        int pty_fd = launch_info.GetPTY().ReleasePrimaryFileDescriptor();
+        if (pty_fd != PseudoTerminal::invalid_fd) {
+          // setup here
+          process_sp->SetSTDIOFileDescriptor(pty_fd);
+        }
+      } else {
+        LLDB_LOGF(log, "Platform::%s Attach() failed: %s", __FUNCTION__,
+                  error.AsCString());
+      }
+    } else {
+      LLDB_LOGF(log,
+                "Platform::%s LaunchProcess() returned launch_info with "
+                "invalid process id",
+                __FUNCTION__);
+    }
+  } else {
+    LLDB_LOGF(log, "Platform::%s LaunchProcess() failed: %s", __FUNCTION__,
+              error.AsCString());
+  }
 
   return process_sp;
 }
