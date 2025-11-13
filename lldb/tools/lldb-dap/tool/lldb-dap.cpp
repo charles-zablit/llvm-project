@@ -512,7 +512,7 @@ static llvm::Error serveConnection(
 }
 
 int main(int argc, char *argv[]) {
-  bool start = false;
+  volatile bool start = 1;
   while(start) {
     
   }

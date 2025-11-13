@@ -22,6 +22,7 @@
 #include "lldb/Host/HostNativeProcessBase.h"
 #include "lldb/Host/HostProcess.h"
 #include "lldb/Host/windows/HostThreadWindows.h"
+#include "lldb/Host/PseudoTerminal.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Target/DynamicLoader.h"
 #include "lldb/Target/MemoryRegionInfo.h"
@@ -120,11 +121,6 @@ ProcessWindows::ProcessWindows(lldb::TargetSP target_sp,
           LLDB_INVALID_BREAK_ID) {}
 
 ProcessWindows::~ProcessWindows() {}
-
-size_t ProcessWindows::GetSTDOUT(char *buf, size_t buf_size, Status &error) {
-  error = Status::FromErrorString("GetSTDOUT unsupported on Windows");
-  return 0;
-}
 
 size_t ProcessWindows::GetSTDERR(char *buf, size_t buf_size, Status &error) {
   error = Status::FromErrorString("GetSTDERR unsupported on Windows");
@@ -659,6 +655,9 @@ void ProcessWindows::OnExitProcess(uint32_t exit_code) {
   LLDB_LOG(log, "Process {0} exited with code {1}", GetID(), exit_code);
 
   TargetSP target = CalculateTarget();
+  PseudoTerminal &pty = target->GetProcessLaunchInfo().GetPTY();
+  pty.~PseudoTerminal();
+
   if (target) {
     ModuleSP executable_module = target->GetExecutableModule();
     ModuleList unloaded_modules;

@@ -35,6 +35,11 @@ public:
                     const FileSpec &stdout_file_spec,
                     const FileSpec &stderr_file_spec,
                     const FileSpec &working_dir, uint32_t launch_flags);
+  
+  ~ProcessLaunchInfo() {
+    1+1;
+    // m_pty->~PseudoTerminal();
+  }
 
   void AppendFileAction(const FileAction &info) {
     m_file_actions.push_back(info);

@@ -429,10 +429,13 @@ std::string ConnectionFileDescriptor::GetURI() { return m_uri; }
 ConnectionStatus
 ConnectionFileDescriptor::BytesAvailable(const Timeout<std::micro> &timeout,
                                          Status *error_ptr) {
+  return eConnectionStatusSuccess;
   // Don't need to take the mutex here separately since we are only called from
   // Read.  If we ever get used more generally we will need to lock here as
   // well.
-
+  const int pipe_fd = m_pipe.GetReadFileDescriptor();
+  // if (pipe_fd == 13)
+  //   return eConnectionStatusSuccess;
   Log *log = GetLog(LLDBLog::Connection);
   LLDB_LOG(log, "this = {0}, timeout = {1}", this, timeout);
 
@@ -440,7 +443,8 @@ ConnectionFileDescriptor::BytesAvailable(const Timeout<std::micro> &timeout,
   // thread change these values out from under us and cause problems in the
   // loop below where like in FS_SET()
   const IOObject::WaitableHandle handle = m_io_sp->GetWaitableHandle();
-  const int pipe_fd = m_pipe.GetReadFileDescriptor();
+  // const int pipe_fd = m_pipe.GetReadFileDescriptor();
+  // pipe_fd = pipe_fd == 13 ? 12 : pipe_fd;
 
   if (handle != IOObject::kInvalidHandleValue) {
     SelectHelper select_helper;
@@ -449,11 +453,50 @@ ConnectionFileDescriptor::BytesAvailable(const Timeout<std::micro> &timeout,
 
     // FIXME: Migrate to MainLoop.
     select_helper.FDSetRead(reinterpret_cast<socket_t>(handle));
-#if defined(_WIN32)
-    // select() won't accept pipes on Windows.  The entire Windows codepath
-    // needs to be converted over to using WaitForMultipleObjects and event
-    // HANDLEs, but for now at least this will allow ::select() to not return
-    // an error.
+// #ifdef _WIN32
+  // return eConnectionStatusSuccess;
+  // HANDLE handles[2];
+  // handles[0] = (HANDLE)m_io_sp->GetWaitableHandle(); // socket HANDLE
+  // handles[1] = (HANDLE)_get_osfhandle(m_pipe.GetReadFileDescriptor()); // pipe HANDLE
+  // DWORD timeout_ms = timeout ? std::chrono::duration_cast<std::chrono::milliseconds>(*timeout).count() : INFINITE;
+
+  // DWORD wait = WaitForMultipleObjects(2, handles, FALSE, timeout_ms);
+  // switch (wait) {
+  //   case WAIT_OBJECT_0:     return eConnectionStatusSuccess;      // socket ready
+  //   case WAIT_OBJECT_0 + 1: {                                    // command pipe
+  //     char c;
+  //     _read(m_pipe.GetReadFileDescriptor(), &c, 1);
+  //     return (c == 'q') ? eConnectionStatusEndOfFile : eConnectionStatusInterrupted;
+  //   }
+  //   case WAIT_TIMEOUT:      return eConnectionStatusTimedOut;
+  //   default:                return eConnectionStatusError;
+  // }
+#ifdef _WIN32
+  HANDLE hPipe = (HANDLE)m_io_sp->GetWaitableHandle();
+
+  DWORD timeout_ms = timeout ? 
+    std::chrono::duration_cast<std::chrono::milliseconds>(*timeout).count() : 
+    INFINITE;
+  // DWORD avail = 0;
+  // if (PeekNamedPipe(hSocket, NULL, 0, NULL, &avail, NULL) && avail == 0)
+  //   return eConnectionStatusTimedOut; // nothing to read yet
+
+  // // otherwise data is ready or pipe closed -> fall through
+  // return eConnectionStatusSuccess;
+  DWORD wait = WaitForSingleObject(hPipe, timeout_ms);
+  switch (wait) {
+    case WAIT_OBJECT_0: {
+      DWORD avail = 0;
+      if (!PeekNamedPipe(hPipe, nullptr, 0, nullptr, &avail, nullptr)) {
+          break; // pipe closed or error
+      }
+      return eConnectionStatusSuccess;
+    }
+    case WAIT_TIMEOUT:
+      return eConnectionStatusError;
+    default:
+      return eConnectionStatusError;
+  }
     const bool have_pipe_fd = false;
 #else
     const bool have_pipe_fd = pipe_fd >= 0;

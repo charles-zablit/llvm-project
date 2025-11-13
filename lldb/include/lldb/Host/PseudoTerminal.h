@@ -41,6 +41,8 @@ public:
   /// PseudoTerminal::ReleaseSaveFileDescriptor()
   ~PseudoTerminal();
 
+  void CloseCon();
+
   /// Close the primary file descriptor if it is valid.
   void ClosePrimaryFileDescriptor();
 

@@ -546,6 +546,8 @@ Status NativeFile::Sync() {
 #define MAX_WRITE_SIZE INT_MAX
 #endif
 
+std::string g_fooo;
+
 Status NativeFile::Read(void *buf, size_t &num_bytes) {
   Status error;
 
@@ -581,19 +583,41 @@ Status NativeFile::Read(void *buf, size_t &num_bytes) {
 
   ssize_t bytes_read = -1;
   if (ValueGuard descriptor_guard = DescriptorIsValid()) {
+// #ifdef _WIN32
+    // DWORD dwRead = 0;
+    // BOOL ok = ReadFile((HANDLE)_get_osfhandle(m_descriptor), buf,
+    //                    (DWORD)num_bytes, &dwRead, NULL);
+    // if (!ok) {
+    //   DWORD err = GetLastError();
+    //   if (err == ERROR_BROKEN_PIPE) {
+    //     num_bytes = 0;
+    //     return Status::FromErrorString("broken pipe");
+    //   } else if (err == ERROR_NO_DATA) {
+    //     num_bytes = 0;
+    //     return error;
+    //   }
+    //   error = Status(err, eErrorTypeWin32);
+    //   num_bytes = 0;
+    // } else {
+    //   num_bytes = dwRead;
+    // }
+    // return error;
+// #else
     bytes_read =
         llvm::sys::RetryAfterSignal(-1, ::read, m_descriptor, buf, num_bytes);
     if (bytes_read == -1) {
       error = Status::FromErrno();
       num_bytes = 0;
     } else
+      if (bytes_read > 0)
+        g_fooo.append(std::string((char*)buf, bytes_read));
       num_bytes = bytes_read;
     return error;
+// #endif
   }
 
   if (ValueGuard file_lock = StreamIsValid()) {
     bytes_read = ::fread(buf, 1, num_bytes, m_stream);
-
     if (bytes_read == 0) {
       if (::feof(m_stream))
         error = Status::FromErrorString("feof");

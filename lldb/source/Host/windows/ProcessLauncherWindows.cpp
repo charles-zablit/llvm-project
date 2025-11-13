@@ -22,24 +22,26 @@ using namespace lldb;
 using namespace lldb_private;
 
 static void CreateEnvironmentBuffer(const Environment &env,
-                                    std::vector<char> &buffer) {
-  // The buffer is a list of null-terminated UTF-16 strings, followed by an
-  // extra L'\0' (two bytes of 0).  An empty environment must have one
-  // empty string, followed by an extra L'\0'.
+                                    std::vector<wchar_t> &buffer) {
+
+  std::vector<std::wstring> env_entries;
   for (const auto &KV : env) {
-    std::wstring warg;
-    if (llvm::ConvertUTF8toWide(Environment::compose(KV), warg)) {
-      buffer.insert(
-          buffer.end(), reinterpret_cast<const char *>(warg.c_str()),
-          reinterpret_cast<const char *>(warg.c_str() + warg.size() + 1));
+    std::wstring wentry;
+    if (llvm::ConvertUTF8toWide(Environment::compose(KV), wentry)) {
+      env_entries.push_back(std::move(wentry));
     }
   }
-  // One null wchar_t (to end the block) is two null bytes
-  buffer.push_back(0);
-  buffer.push_back(0);
-  // Insert extra two bytes, just in case the environment was empty.
-  buffer.push_back(0);
-  buffer.push_back(0);
+  std::sort(env_entries.begin(), env_entries.end(),
+            [](const std::wstring &a, const std::wstring &b) {
+              return _wcsicmp(a.c_str(), b.c_str()) < 0;
+            });
+
+  buffer.clear();
+  for (const auto &env_entry : env_entries) {
+    buffer.insert(buffer.end(), env_entry.begin(), env_entry.end());
+    buffer.push_back(L'\0');
+  }
+  buffer.push_back(L'\0');
 }
 
 static bool GetFlattenedWindowsCommandString(Args args, std::wstring &command) {
@@ -59,27 +61,7 @@ static bool GetFlattenedWindowsCommandString(Args args, std::wstring &command) {
   return true;
 }
 
-HRESULT InitializeStartupInfoAttachedToConPTY(STARTUPINFOEXW *siEx, HPCON hPC) {
-  HRESULT hr = E_UNEXPECTED;
-  size_t size = 0;
-
-  siEx->StartupInfo.cb = sizeof(STARTUPINFOEXW);
-
-  // Create the appropriately sized thread attribute list
-  InitializeProcThreadAttributeList(NULL, 1, 0, &size);
-  siEx->lpAttributeList =
-      reinterpret_cast<PPROC_THREAD_ATTRIBUTE_LIST>(malloc(size));
-  if (InitializeProcThreadAttributeList(siEx->lpAttributeList, 1, 0, &size)) {
-    hr = UpdateProcThreadAttribute(siEx->lpAttributeList, 0,
-                                   PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hPC,
-                                   sizeof(HPCON), NULL, NULL)
-             ? S_OK
-             : HRESULT_FROM_WIN32(GetLastError());
-  } else {
-    hr = HRESULT_FROM_WIN32(GetLastError());
-  }
-  return hr;
-}
+std::string g_foo;
 
 HostProcess
 ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
@@ -87,7 +69,7 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
   error.Clear();
 
   std::string executable;
-  std::vector<char> environment;
+  std::vector<wchar_t> environment;
   STARTUPINFOEXW startupinfoex = {};
   STARTUPINFOW &startupinfo = startupinfoex.StartupInfo;
   PROCESS_INFORMATION pi = {};
@@ -95,15 +77,52 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
   std::vector<HANDLE> inherited_handles;
   PseudoTerminal &pty = launch_info.GetPTY();
   HPCON hPC = pty.GetPseudoTerminalHandle();
-  DWORD flags = 0;
-  flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
+  // const char *hide_console_var =
+  //     getenv("LLDB_LAUNCH_INFERIORS_WITHOUT_CONSOLE");
+  // if (hide_console_var &&
+  //     llvm::StringRef(hide_console_var).equals_insensitive("true")) {
+  //   startupinfo.dwFlags |= STARTF_USESHOWWINDOW;
+  //   startupinfo.wShowWindow = SW_HIDE;
+  // }
+  startupinfo.dwFlags |= STARTF_USESTDHANDLES;
+
+
+  DWORD flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_CONSOLE;
   if (launch_info.GetFlags().Test(eLaunchFlagDebug))
     flags |= DEBUG_ONLY_THIS_PROCESS;
-  InitializeStartupInfoAttachedToConPTY(&startupinfoex, hPC);
 
-  LPVOID env_block = nullptr;
+  if (launch_info.GetFlags().Test(eLaunchFlagDisableSTDIO))
+    flags &= ~CREATE_NEW_CONSOLE;
+
+  startupinfo.cb = sizeof(startupinfoex);
+
+  SIZE_T attributelist_size = 0;
+  InitializeProcThreadAttributeList(/*lpAttributeList=*/nullptr,
+                                    /*dwAttributeCount=*/1, /*dwFlags=*/0,
+                                    &attributelist_size);
+
+  startupinfoex.lpAttributeList =
+      static_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(malloc(attributelist_size));
+  auto free_attributelist =
+      llvm::make_scope_exit([&] { free(startupinfoex.lpAttributeList); });
+  if (!InitializeProcThreadAttributeList(startupinfoex.lpAttributeList,
+                                         /*dwAttributeCount=*/1, /*dwFlags=*/0,
+                                         &attributelist_size)) {
+    error = Status(::GetLastError(), eErrorTypeWin32);
+    return HostProcess();
+  }
+  auto delete_attributelist = llvm::make_scope_exit(
+      [&] { DeleteProcThreadAttributeList(startupinfoex.lpAttributeList); });
+
+  if (!UpdateProcThreadAttribute(startupinfoex.lpAttributeList, 0,
+                                 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hPC,
+                                 sizeof(hPC), NULL, NULL)) {
+    error = Status(::GetLastError(), eErrorTypeWin32);
+    return HostProcess();
+  }
+
   ::CreateEnvironmentBuffer(launch_info.GetEnvironment(), environment);
-  env_block = environment.data();
+  LPVOID env_block = environment.empty() ? nullptr : environment.data();
 
   executable = launch_info.GetExecutableFile().GetPath();
   std::wstring wcommandLine;
@@ -126,10 +145,43 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
 
   BOOL result = ::CreateProcessW(
       wexecutable.c_str(), pwcommandLine, NULL, NULL,
-      /*bInheritHandles=*/!inherited_handles.empty(), flags, NULL,
+      FALSE, flags, env_block,
       wworkingDirectory.size() == 0 ? NULL : wworkingDirectory.c_str(),
-      &startupinfo, &pi);
+      reinterpret_cast<STARTUPINFOW*>(&startupinfoex), &pi);
 
+  // std::thread([fd = pty.GetPrimaryFileDescriptor()]() {
+  //     return;
+  //     DWORD bytesAvailable = 0;
+  //     char buf[4096];
+  //     HANDLE hPipe = (HANDLE)_get_osfhandle(fd);
+  //     while (true) {
+  //         // Wait for the pipe to become signaled (data available or broken)
+  //         DWORD waitResult = WaitForSingleObject(hPipe, INFINITE);
+  //         if (waitResult != WAIT_OBJECT_0) {
+  //             break; // handle closed or error
+  //         }
+
+  //         // Optional: check how much data is ready
+  //         if (!PeekNamedPipe(hPipe, nullptr, 0, nullptr, &bytesAvailable, nullptr)) {
+  //           break; // pipe closed or error
+  //         }
+  //         if (bytesAvailable == 0) {
+  //             continue;
+  //         }
+
+  //         DWORD bytesRead = 0;
+  //         if (!ReadFile(hPipe, buf, sizeof(buf), &bytesRead, nullptr)) {
+  //           break; // EOF or error
+  //         }
+
+  //         if (bytesRead > 0) {
+  //             std::string foo(buf, bytesRead);
+  //             g_foo.append(foo);
+  //             llvm::errs() << "[OUT] " << llvm::StringRef(buf, bytesRead);
+  //             llvm::errs().flush();
+  //         }
+  //     }
+  // }).detach();
   if (!result) {
     // Call GetLastError before we make any other system calls.
     error = Status(::GetLastError(), eErrorTypeWin32);

@@ -38,7 +38,6 @@ public:
 
   ~ProcessWindows();
 
-  size_t GetSTDOUT(char *buf, size_t buf_size, Status &error) override;
   size_t GetSTDERR(char *buf, size_t buf_size, Status &error) override;
   size_t PutSTDIN(const char *buf, size_t buf_size, Status &error) override;
 

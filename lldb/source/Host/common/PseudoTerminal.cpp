@@ -40,14 +40,28 @@ PseudoTerminal::PseudoTerminal() = default;
 // ReleasePrimaryFileDescriptor() or the ReleaseSaveFileDescriptor() member
 // functions.
 PseudoTerminal::~PseudoTerminal() {
+  if (m_conpty_handle == INVALID_HANDLE_VALUE)
+    return;
+  #ifdef _WIN32
+  CloseCon();
+  #endif
   ClosePrimaryFileDescriptor();
   CloseSecondaryFileDescriptor();
+}
+
+void PseudoTerminal::CloseCon() {
+  if (m_conpty_handle != INVALID_HANDLE_VALUE)
+    ClosePseudoConsole(m_conpty_handle);
 }
 
 // Close the primary file descriptor if it is valid.
 void PseudoTerminal::ClosePrimaryFileDescriptor() {
   if (m_primary_fd >= 0) {
-    ::close(m_primary_fd);
+    #ifdef _WIN32
+      _close(m_primary_fd);
+    #else
+      ::close(m_primary_fd);
+    #endif
     m_primary_fd = invalid_fd;
   }
 }
@@ -55,7 +69,11 @@ void PseudoTerminal::ClosePrimaryFileDescriptor() {
 // Close the secondary file descriptor if it is valid.
 void PseudoTerminal::CloseSecondaryFileDescriptor() {
   if (m_secondary_fd >= 0) {
-    ::close(m_secondary_fd);
+    #ifdef _WIN32
+      _close(m_secondary_fd);
+    #else
+      ::close(m_secondary_fd);
+    #endif
     m_secondary_fd = invalid_fd;
   }
 }
@@ -114,11 +132,12 @@ llvm::Error PseudoTerminal::OpenFirstAvailablePrimary(int oflag) {
         llvm::errc::io_error);
   }
 
-  // Save handles for later use in this class
   m_conpty_handle = hPC;
+  DWORD mode = PIPE_NOWAIT;
+  SetNamedPipeHandleState(hOutputRead, &mode, NULL, NULL);
+  m_pseudo_term_out_read = hOutputRead;
   m_primary_fd = _open_osfhandle(reinterpret_cast<intptr_t>(hOutputRead), _O_RDONLY);
-  // m_pseudo_term_out_read = hOutputRead;
-  // m_conpty_output = hOutputRead;
+  // m_secondary_fd = _open_osfhandle(reinterpret_cast<intptr_t>(hOutputWrite), _O_RDONLY);
 
   return llvm::Error::success();
 #endif
