@@ -87,7 +87,7 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
   startupinfo.dwFlags |= STARTF_USESTDHANDLES;
 
 
-  DWORD flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_CONSOLE;
+  DWORD flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
   if (launch_info.GetFlags().Test(eLaunchFlagDebug))
     flags |= DEBUG_ONLY_THIS_PROCESS;
 

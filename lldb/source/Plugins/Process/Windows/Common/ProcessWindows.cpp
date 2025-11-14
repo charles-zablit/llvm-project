@@ -657,7 +657,6 @@ void ProcessWindows::OnExitProcess(uint32_t exit_code) {
 
   TargetSP target = CalculateTarget();
   PseudoTerminal &pty = target->GetProcessLaunchInfo().GetPTY();
-  Sleep(1000);
   pty.Close();
 
   if (target) {
