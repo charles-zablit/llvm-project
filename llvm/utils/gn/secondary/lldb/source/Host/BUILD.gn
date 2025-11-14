@@ -65,6 +65,7 @@ static_library("Host") {
   if (current_os == "win") {
     sources += [
       "windows/ConnectionGenericFileWindows.cpp",
+      "windows/ConnectionPseudoConsoleWindows.cpp",
       "windows/FileSystem.cpp",
       "windows/Host.cpp",
       "windows/HostInfoWindows.cpp",
@@ -74,6 +75,7 @@ static_library("Host") {
       "windows/MainLoopWindows.cpp",
       "windows/PipeWindows.cpp",
       "windows/ProcessLauncherWindows.cpp",
+      "windows/PseudoTerminalWindows.cpp",
       "windows/ProcessRunLock.cpp",
     ]
   } else {

@@ -37,7 +37,6 @@ public:
                     const FileSpec &working_dir, uint32_t launch_flags);
   
   ~ProcessLaunchInfo() {
-    1+1;
     // m_pty->~PseudoTerminal();
   }
 
@@ -124,6 +123,10 @@ public:
   bool MonitorProcess() const;
 
   PseudoTerminal &GetPTY() const { return *m_pty; }
+
+  std::shared_ptr<PseudoTerminal> GetPTYSP() const { 
+    return m_pty; 
+  }
 
   void SetLaunchEventData(const char *data) { m_event_data.assign(data); }
 

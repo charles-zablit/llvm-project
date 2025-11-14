@@ -39,9 +39,9 @@ public:
   /// they are valid and ownership has not been released using one of: @li
   /// PseudoTerminal::ReleasePrimaryFileDescriptor() @li
   /// PseudoTerminal::ReleaseSaveFileDescriptor()
-  ~PseudoTerminal();
+  virtual ~PseudoTerminal();
 
-  void CloseCon();
+  virtual void Close();
 
   /// Close the primary file descriptor if it is valid.
   void ClosePrimaryFileDescriptor();
@@ -83,6 +83,8 @@ public:
   ///
   /// \see PseudoTerminal::ReleasePrimaryFileDescriptor()
   int GetPrimaryFileDescriptor() const;
+
+  virtual void* GetPrimaryHandle() { return nullptr; };
 
   /// The secondary file descriptor accessor.
   ///
@@ -128,7 +130,7 @@ public:
   ///
   /// \see PseudoTerminal::GetPrimaryFileDescriptor() @see
   /// PseudoTerminal::ReleasePrimaryFileDescriptor()
-  llvm::Error OpenFirstAvailablePrimary(int oflag);
+  virtual llvm::Error OpenFirstAvailablePrimary(int oflag);
 
   /// Open the secondary for the current primary pseudo terminal.
   ///
@@ -175,15 +177,12 @@ public:
   ///     if the secondary file descriptor is not currently valid.
   int ReleaseSecondaryFileDescriptor();
 
-  void* GetPseudoTerminalHandle();
+  virtual void* GetPseudoTerminalHandle() {return nullptr;};
 
 protected:
   // Member variables
   int m_primary_fd = invalid_fd;   ///< The file descriptor for the primary.
   int m_secondary_fd = invalid_fd; ///< The file descriptor for the secondary.
-  void* m_conpty_handle = (void*)(unsigned long long)-1;
-  void* m_pseudo_term_out_read = (void*)(unsigned long long)-1;
-  void* m_conpty_output = (void*)(unsigned long long)-1;
 
 private:
   PseudoTerminal(const PseudoTerminal &) = delete;

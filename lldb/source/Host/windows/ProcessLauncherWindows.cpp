@@ -149,11 +149,9 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
       wworkingDirectory.size() == 0 ? NULL : wworkingDirectory.c_str(),
       reinterpret_cast<STARTUPINFOW*>(&startupinfoex), &pi);
 
-  // std::thread([fd = pty.GetPrimaryFileDescriptor()]() {
-  //     return;
+  // std::thread([hPipe = pty.GetPrimaryHandle()]() {
   //     DWORD bytesAvailable = 0;
   //     char buf[4096];
-  //     HANDLE hPipe = (HANDLE)_get_osfhandle(fd);
   //     while (true) {
   //         // Wait for the pipe to become signaled (data available or broken)
   //         DWORD waitResult = WaitForSingleObject(hPipe, INFINITE);

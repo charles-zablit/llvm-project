@@ -40,18 +40,12 @@ PseudoTerminal::PseudoTerminal() = default;
 // ReleasePrimaryFileDescriptor() or the ReleaseSaveFileDescriptor() member
 // functions.
 PseudoTerminal::~PseudoTerminal() {
-  if (m_conpty_handle == INVALID_HANDLE_VALUE)
-    return;
-  #ifdef _WIN32
-  CloseCon();
-  #endif
-  ClosePrimaryFileDescriptor();
-  CloseSecondaryFileDescriptor();
+  Close();
 }
 
-void PseudoTerminal::CloseCon() {
-  if (m_conpty_handle != INVALID_HANDLE_VALUE)
-    ClosePseudoConsole(m_conpty_handle);
+void PseudoTerminal::Close() {
+  ClosePrimaryFileDescriptor();
+  CloseSecondaryFileDescriptor();
 }
 
 // Close the primary file descriptor if it is valid.
@@ -103,43 +97,7 @@ llvm::Error PseudoTerminal::OpenFirstAvailablePrimary(int oflag) {
 
   return llvm::Error::success();
 #else
-  HRESULT hr;
-  HANDLE hInputRead = INVALID_HANDLE_VALUE;
-  HANDLE hInputWrite = INVALID_HANDLE_VALUE;
-  HANDLE hOutputRead = INVALID_HANDLE_VALUE;
-  HANDLE hOutputWrite = INVALID_HANDLE_VALUE;
-
-  if (!CreatePipe(&hInputRead, &hInputWrite, NULL, 0))
-    return llvm::errorCodeToError(std::error_code(GetLastError(), std::system_category()));
-
-  if (!CreatePipe(&hOutputRead, &hOutputWrite, NULL, 0)) {
-    CloseHandle(hInputRead);
-    CloseHandle(hInputWrite);
-    return llvm::errorCodeToError(std::error_code(GetLastError(), std::system_category()));
-  }
-
-  COORD consoleSize{80, 25};
-  HPCON hPC = INVALID_HANDLE_VALUE;
-  hr = CreatePseudoConsole(consoleSize, hInputRead, hOutputWrite, 0, &hPC);
-  CloseHandle(hInputRead);
-  CloseHandle(hOutputWrite);
-
-  if (FAILED(hr)) {
-    CloseHandle(hInputWrite);
-    CloseHandle(hOutputRead);
-    return llvm::make_error<llvm::StringError>(
-        "Failed to create Windows ConPTY pseudo terminal",
-        llvm::errc::io_error);
-  }
-
-  m_conpty_handle = hPC;
-  DWORD mode = PIPE_NOWAIT;
-  SetNamedPipeHandleState(hOutputRead, &mode, NULL, NULL);
-  m_pseudo_term_out_read = hOutputRead;
-  m_primary_fd = _open_osfhandle(reinterpret_cast<intptr_t>(hOutputRead), _O_RDONLY);
-  // m_secondary_fd = _open_osfhandle(reinterpret_cast<intptr_t>(hOutputWrite), _O_RDONLY);
-
-  return llvm::Error::success();
+  return llvm::errorCodeToError(llvm::errc::not_supported);
 #endif
 }
 
@@ -166,6 +124,7 @@ static std::string use_ptsname(int fd) {
 #endif
 
 std::string PseudoTerminal::GetSecondaryName() const {
+  return "";
   assert(m_primary_fd >= 0);
 #if HAVE_PTSNAME_R
 #if defined(__APPLE__)
@@ -270,5 +229,3 @@ int PseudoTerminal::ReleaseSecondaryFileDescriptor() {
   m_secondary_fd = invalid_fd;
   return fd;
 }
-
-HPCON PseudoTerminal::GetPseudoTerminalHandle() { return m_conpty_handle; };

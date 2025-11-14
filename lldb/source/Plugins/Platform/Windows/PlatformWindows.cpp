@@ -529,11 +529,8 @@ ProcessSP PlatformWindows::DebugProcess(ProcessLaunchInfo &launch_info,
       // been used where the secondary side was given as the file to open for
       // stdin/out/err after we have already opened the primary so we can
       // read/write stdin/out/err.
-      int pty_fd = launch_info.GetPTY().GetPrimaryFileDescriptor();
-      if (pty_fd != PseudoTerminal::invalid_fd) {
-        // setup here
-        process_sp->SetSTDIOFileDescriptor(pty_fd);
-      }
+      auto pty = launch_info.GetPTYSP();
+      process_sp->SetPseudoTerminalHandle(pty);
     } else {
       LLDB_LOGF(log, "Platform::%s Attach() failed: %s", __FUNCTION__,
                 error.AsCString());

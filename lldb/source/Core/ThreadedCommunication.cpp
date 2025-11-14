@@ -273,11 +273,7 @@ lldb::thread_result_t ThreadedCommunication::ReadThread() {
   ConnectionStatus status = eConnectionStatusSuccess;
   bool done = false;
   bool disconnect = false;
-  int i = 0;
   while (!done && m_read_thread_enabled) {
-    i++;
-    // if (i > 5)
-    //   break;
     size_t bytes_read = ReadFromConnection(
         buf, sizeof(buf), std::chrono::seconds(5), status, &error);
     if (bytes_read > 0 || status == eConnectionStatusEndOfFile)

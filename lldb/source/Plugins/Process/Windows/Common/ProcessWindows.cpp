@@ -29,6 +29,7 @@
 #include "lldb/Target/StopInfo.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/State.h"
+#include "lldb/Host/windows/ConnectionPseudoConsoleWindows.h"
 
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Format.h"
@@ -656,7 +657,8 @@ void ProcessWindows::OnExitProcess(uint32_t exit_code) {
 
   TargetSP target = CalculateTarget();
   PseudoTerminal &pty = target->GetProcessLaunchInfo().GetPTY();
-  pty.~PseudoTerminal();
+  Sleep(1000);
+  pty.Close();
 
   if (target) {
     ModuleSP executable_module = target->GetExecutableModule();
@@ -952,5 +954,26 @@ Status ProcessWindows::DisableWatchpoint(WatchpointSP wp_sp, bool notify) {
   wp_sp->SetEnabled(false, notify);
 
   return error;
+}
+
+void ProcessWindows::SetPseudoTerminalHandle(const std::shared_ptr<PseudoTerminal> &pty) {
+  // First set up the Read Thread for reading/handling process I/O
+  // Attempt safe downcast to derived type
+  m_stdio_communication.SetConnection(
+      std::make_unique<ConnectionPseudoConsole>(pty, false));
+  if (m_stdio_communication.IsConnected()) {
+    m_stdio_communication.SetReadThreadBytesReceivedCallback(
+        STDIOReadThreadBytesReceived, this);
+    m_stdio_communication.StartReadThread();
+
+    // Now read thread is set up, set up input reader.
+    // {
+    //   // TODO:
+    //   std::lock_guard<std::mutex> guard(m_process_input_reader_mutex);
+    //   if (!m_process_input_reader)
+    //     m_process_input_reader =
+    //         std::make_shared<IOHandlerProcessSTDIO>(this, handle);
+    // }
+  }
 }
 } // namespace lldb_private

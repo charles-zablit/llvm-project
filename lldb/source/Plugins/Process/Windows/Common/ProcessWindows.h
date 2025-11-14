@@ -12,6 +12,7 @@
 #include "lldb/Target/Process.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/lldb-forward.h"
+#include "lldb/Host/windows/PseudoTerminalWindows.h"
 
 #include "Plugins/DynamicLoader/Windows-DYLD/DynamicLoaderWindowsDYLD.h"
 #include "ProcessDebugger.h"
@@ -99,6 +100,8 @@ public:
                           bool notify = true) override;
   Status DisableWatchpoint(lldb::WatchpointSP wp_sp,
                            bool notify = true) override;
+
+  void SetPseudoTerminalHandle(const std::shared_ptr<PseudoTerminal> &pty) override;
 
 protected:
   ProcessWindows(lldb::TargetSP target_sp, lldb::ListenerSP listener_sp);
