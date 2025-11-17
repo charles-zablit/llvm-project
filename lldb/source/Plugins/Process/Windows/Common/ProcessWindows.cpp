@@ -21,6 +21,8 @@
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Host/HostNativeProcessBase.h"
 #include "lldb/Host/HostProcess.h"
+#include "lldb/Host/PseudoTerminal.h"
+#include "lldb/Host/windows/ConnectionPseudoTerminalWindows.h"
 #include "lldb/Host/windows/HostThreadWindows.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Target/DynamicLoader.h"
@@ -120,22 +122,6 @@ ProcessWindows::ProcessWindows(lldb::TargetSP target_sp,
           LLDB_INVALID_BREAK_ID) {}
 
 ProcessWindows::~ProcessWindows() {}
-
-size_t ProcessWindows::GetSTDOUT(char *buf, size_t buf_size, Status &error) {
-  error = Status::FromErrorString("GetSTDOUT unsupported on Windows");
-  return 0;
-}
-
-size_t ProcessWindows::GetSTDERR(char *buf, size_t buf_size, Status &error) {
-  error = Status::FromErrorString("GetSTDERR unsupported on Windows");
-  return 0;
-}
-
-size_t ProcessWindows::PutSTDIN(const char *buf, size_t buf_size,
-                                Status &error) {
-  error = Status::FromErrorString("PutSTDIN unsupported on Windows");
-  return 0;
-}
 
 Status ProcessWindows::EnableBreakpointSite(BreakpointSite *bp_site) {
   if (bp_site->HardwareRequired())
@@ -659,6 +645,7 @@ void ProcessWindows::OnExitProcess(uint32_t exit_code) {
   LLDB_LOG(log, "Process {0} exited with code {1}", GetID(), exit_code);
 
   TargetSP target = CalculateTarget();
+  target->GetProcessLaunchInfo().GetPTY()->Close();
   if (target) {
     ModuleSP executable_module = target->GetExecutableModule();
     ModuleList unloaded_modules;
@@ -953,5 +940,18 @@ Status ProcessWindows::DisableWatchpoint(WatchpointSP wp_sp, bool notify) {
   wp_sp->SetEnabled(false, notify);
 
   return error;
+}
+
+void ProcessWindows::SetPseudoTerminalHandle(
+    const std::shared_ptr<PseudoTerminal> &pty) {
+  m_stdio_communication.SetConnection(
+      std::make_unique<ConnectionPseudoTerminal>(pty, false));
+  if (m_stdio_communication.IsConnected()) {
+    m_stdio_communication.SetReadThreadBytesReceivedCallback(
+        STDIOReadThreadBytesReceived, this);
+    m_stdio_communication.StartReadThread();
+
+    // TODO: Now read thread is set up, set up input reader.
+  }
 }
 } // namespace lldb_private

@@ -21,42 +21,41 @@
 using namespace lldb;
 using namespace lldb_private;
 
-static void CreateEnvironmentBuffer(const Environment &env,
-                                    std::vector<char> &buffer) {
-  // The buffer is a list of null-terminated UTF-16 strings, followed by an
-  // extra L'\0' (two bytes of 0).  An empty environment must have one
-  // empty string, followed by an extra L'\0'.
+std::vector<wchar_t>
+ProcessLauncherWindows::CreateEnvironmentBufferW(const Environment &env) {
+  std::vector<std::wstring> env_entries;
   for (const auto &KV : env) {
-    std::wstring warg;
-    if (llvm::ConvertUTF8toWide(Environment::compose(KV), warg)) {
-      buffer.insert(
-          buffer.end(), reinterpret_cast<const char *>(warg.c_str()),
-          reinterpret_cast<const char *>(warg.c_str() + warg.size() + 1));
+    std::wstring wentry;
+    if (llvm::ConvertUTF8toWide(Environment::compose(KV), wentry)) {
+      env_entries.push_back(std::move(wentry));
     }
   }
-  // One null wchar_t (to end the block) is two null bytes
-  buffer.push_back(0);
-  buffer.push_back(0);
-  // Insert extra two bytes, just in case the environment was empty.
-  buffer.push_back(0);
-  buffer.push_back(0);
+  std::sort(env_entries.begin(), env_entries.end(),
+            [](const std::wstring &a, const std::wstring &b) {
+              return _wcsicmp(a.c_str(), b.c_str()) < 0;
+            });
+
+  std::vector<wchar_t> buffer;
+  buffer.clear();
+  for (const auto &env_entry : env_entries) {
+    buffer.insert(buffer.end(), env_entry.begin(), env_entry.end());
+    buffer.push_back(L'\0');
+  }
+  buffer.push_back(L'\0');
+
+  return buffer;
 }
 
-static bool GetFlattenedWindowsCommandString(Args args, std::wstring &command) {
+llvm::ErrorOr<std::wstring>
+ProcessLauncherWindows::GetFlattenedWindowsCommandStringW(Args args) {
   if (args.empty())
-    return false;
+    return L"";
 
   std::vector<llvm::StringRef> args_ref;
   for (auto &entry : args.entries())
     args_ref.push_back(entry.ref());
 
-  llvm::ErrorOr<std::wstring> result =
-      llvm::sys::flattenWindowsCommandLine(args_ref);
-  if (result.getError())
-    return false;
-
-  command = *result;
-  return true;
+  return llvm::sys::flattenWindowsCommandLine(args_ref);
 }
 
 HostProcess
@@ -64,40 +63,29 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
                                       Status &error) {
   error.Clear();
 
-  std::string executable;
-  std::vector<char> environment;
-  STARTUPINFOEX startupinfoex = {};
-  STARTUPINFO &startupinfo = startupinfoex.StartupInfo;
+  STARTUPINFOEXW startupinfoex = {};
+  STARTUPINFOW &startupinfo = startupinfoex.StartupInfo;
   PROCESS_INFORMATION pi = {};
 
-  HANDLE stdin_handle = GetStdioHandle(launch_info, STDIN_FILENO);
-  HANDLE stdout_handle = GetStdioHandle(launch_info, STDOUT_FILENO);
-  HANDLE stderr_handle = GetStdioHandle(launch_info, STDERR_FILENO);
-  auto close_handles = llvm::make_scope_exit([&] {
-    if (stdin_handle)
-      ::CloseHandle(stdin_handle);
-    if (stdout_handle)
-      ::CloseHandle(stdout_handle);
-    if (stderr_handle)
-      ::CloseHandle(stderr_handle);
-  });
+  std::vector<HANDLE> inherited_handles;
+  HPCON hPC = launch_info.GetPTY()->GetPseudoTerminalHandle();
+  // const char *hide_console_var =
+  //     getenv("LLDB_LAUNCH_INFERIORS_WITHOUT_CONSOLE");
+  // if (hide_console_var &&
+  //     llvm::StringRef(hide_console_var).equals_insensitive("true")) {
+  //   startupinfo.dwFlags |= STARTF_USESHOWWINDOW;
+  //   startupinfo.wShowWindow = SW_HIDE;
+  // }
+  startupinfo.dwFlags |= STARTF_USESTDHANDLES;
+
+  DWORD flags = CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT;
+  if (launch_info.GetFlags().Test(eLaunchFlagDebug))
+    flags |= DEBUG_ONLY_THIS_PROCESS;
+
+  if (launch_info.GetFlags().Test(eLaunchFlagDisableSTDIO))
+    flags &= ~CREATE_NEW_CONSOLE;
 
   startupinfo.cb = sizeof(startupinfoex);
-  startupinfo.dwFlags |= STARTF_USESTDHANDLES;
-  startupinfo.hStdError =
-      stderr_handle ? stderr_handle : ::GetStdHandle(STD_ERROR_HANDLE);
-  startupinfo.hStdInput =
-      stdin_handle ? stdin_handle : ::GetStdHandle(STD_INPUT_HANDLE);
-  startupinfo.hStdOutput =
-      stdout_handle ? stdout_handle : ::GetStdHandle(STD_OUTPUT_HANDLE);
-
-  std::vector<HANDLE> inherited_handles;
-  if (startupinfo.hStdError)
-    inherited_handles.push_back(startupinfo.hStdError);
-  if (startupinfo.hStdInput)
-    inherited_handles.push_back(startupinfo.hStdInput);
-  if (startupinfo.hStdOutput)
-    inherited_handles.push_back(startupinfo.hStdOutput);
 
   SIZE_T attributelist_size = 0;
   InitializeProcThreadAttributeList(/*lpAttributeList=*/nullptr,
@@ -116,61 +104,40 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
   }
   auto delete_attributelist = llvm::make_scope_exit(
       [&] { DeleteProcThreadAttributeList(startupinfoex.lpAttributeList); });
-  for (size_t i = 0; i < launch_info.GetNumFileActions(); ++i) {
-    const FileAction *act = launch_info.GetFileActionAtIndex(i);
-    if (act->GetAction() == FileAction::eFileActionDuplicate &&
-        act->GetFD() == act->GetActionArgument())
-      inherited_handles.push_back(reinterpret_cast<HANDLE>(act->GetFD()));
-  }
-  if (!inherited_handles.empty()) {
-    if (!UpdateProcThreadAttribute(
-            startupinfoex.lpAttributeList, /*dwFlags=*/0,
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, inherited_handles.data(),
-            inherited_handles.size() * sizeof(HANDLE),
-            /*lpPreviousValue=*/nullptr, /*lpReturnSize=*/nullptr)) {
-      error = Status(::GetLastError(), eErrorTypeWin32);
-      return HostProcess();
-    }
+
+  if (!UpdateProcThreadAttribute(startupinfoex.lpAttributeList, 0,
+                                 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, hPC,
+                                 sizeof(hPC), NULL, NULL)) {
+    error = Status(::GetLastError(), eErrorTypeWin32);
+    return HostProcess();
   }
 
-  const char *hide_console_var =
-      getenv("LLDB_LAUNCH_INFERIORS_WITHOUT_CONSOLE");
-  if (hide_console_var &&
-      llvm::StringRef(hide_console_var).equals_insensitive("true")) {
-    startupinfo.dwFlags |= STARTF_USESHOWWINDOW;
-    startupinfo.wShowWindow = SW_HIDE;
+  std::vector<wchar_t> environment =
+      CreateEnvironmentBufferW(launch_info.GetEnvironment());
+  LPVOID env_block = environment.empty() ? nullptr : environment.data();
+
+  auto wcommandLineOrErr =
+      GetFlattenedWindowsCommandStringW(launch_info.GetArguments());
+  if (!wcommandLineOrErr) {
+    error = Status(wcommandLineOrErr.getError());
+    return HostProcess();
   }
-
-  DWORD flags = CREATE_NEW_CONSOLE | CREATE_UNICODE_ENVIRONMENT |
-                EXTENDED_STARTUPINFO_PRESENT;
-  if (launch_info.GetFlags().Test(eLaunchFlagDebug))
-    flags |= DEBUG_ONLY_THIS_PROCESS;
-
-  if (launch_info.GetFlags().Test(eLaunchFlagDisableSTDIO))
-    flags &= ~CREATE_NEW_CONSOLE;
-
-  LPVOID env_block = nullptr;
-  ::CreateEnvironmentBuffer(launch_info.GetEnvironment(), environment);
-  env_block = environment.data();
-
-  executable = launch_info.GetExecutableFile().GetPath();
-  std::wstring wcommandLine;
-  GetFlattenedWindowsCommandString(launch_info.GetArguments(), wcommandLine);
-
-  std::wstring wexecutable, wworkingDirectory;
-  llvm::ConvertUTF8toWide(executable, wexecutable);
-  llvm::ConvertUTF8toWide(launch_info.GetWorkingDirectory().GetPath(),
-                          wworkingDirectory);
+  std::wstring wcommandLine = *wcommandLineOrErr;
   // If the command line is empty, it's best to pass a null pointer to tell
   // CreateProcessW to use the executable name as the command line.  If the
   // command line is not empty, its contents may be modified by CreateProcessW.
   WCHAR *pwcommandLine = wcommandLine.empty() ? nullptr : &wcommandLine[0];
 
+  std::wstring wexecutable, wworkingDirectory;
+  llvm::ConvertUTF8toWide(launch_info.GetExecutableFile().GetPath(),
+                          wexecutable);
+  llvm::ConvertUTF8toWide(launch_info.GetWorkingDirectory().GetPath(),
+                          wworkingDirectory);
+
   BOOL result = ::CreateProcessW(
-      wexecutable.c_str(), pwcommandLine, NULL, NULL,
-      /*bInheritHandles=*/!inherited_handles.empty(), flags, env_block,
+      wexecutable.c_str(), pwcommandLine, NULL, NULL, FALSE, flags, env_block,
       wworkingDirectory.size() == 0 ? NULL : wworkingDirectory.c_str(),
-      reinterpret_cast<STARTUPINFO *>(&startupinfoex), &pi);
+      reinterpret_cast<STARTUPINFOW *>(&startupinfoex), &pi);
 
   if (!result) {
     // Call GetLastError before we make any other system calls.

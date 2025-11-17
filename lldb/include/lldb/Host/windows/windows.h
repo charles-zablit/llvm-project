@@ -9,9 +9,9 @@
 #ifndef LLDB_lldb_windows_h_
 #define LLDB_lldb_windows_h_
 
-#define NTDDI_VERSION NTDDI_VISTA
+// #define NTDDI_VERSION NTDDI_VISTA
 #undef _WIN32_WINNT // undef a previous definition to avoid warning
-#define _WIN32_WINNT _WIN32_WINNT_VISTA
+// #define _WIN32_WINNT _WIN32_WINNT_VISTA
 #define WIN32_LEAN_AND_MEAN
 #define NOGDI
 #undef NOMINMAX // undef a previous definition to avoid warning
@@ -26,6 +26,7 @@
 #undef near
 #undef FAR
 #undef NEAR
+#undef WIN32_MEMORY_INFORMATION_CLASS
 #define FAR
 #define NEAR
 

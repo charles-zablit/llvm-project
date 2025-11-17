@@ -16,7 +16,6 @@ import tempfile
 
 
 class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
-    @skipIfWindows
     def test_default(self):
         """
         Tests the default launch of a simple program. No arguments,
