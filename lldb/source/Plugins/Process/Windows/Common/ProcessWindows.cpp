@@ -651,8 +651,12 @@ void ProcessWindows::OnExitProcess(uint32_t exit_code) {
   Log *log = GetLog(WindowsLog::Process);
   LLDB_LOG(log, "Process {0} exited with code {1}", GetID(), exit_code);
 
-  if (m_pty)
+  if (m_pty) {
+    m_stdio_communication.SynchronizeWithReadThread();
+    m_stdio_communication.StopReadThread();
+    m_stdio_communication.Disconnect();
     m_pty->Close();
+  }
 
   TargetSP target = CalculateTarget();
   if (target) {

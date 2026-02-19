@@ -204,6 +204,7 @@ bool ThreadedCommunication::StopReadThread(Status *error_ptr) {
            "{0} ThreadedCommunication::StopReadThread ()", this);
 
   m_read_thread_enabled = false;
+  m_connection_sp->InterruptRead();
 
   BroadcastEvent(eBroadcastBitReadThreadShouldExit, nullptr);
 
