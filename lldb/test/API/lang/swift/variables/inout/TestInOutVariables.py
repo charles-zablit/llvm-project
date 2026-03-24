@@ -19,7 +19,7 @@ import os
 
 class TestInOutVariables(TestBase):
     @swiftTest
-    @expectedFailureWindows
+    @skipIfWindows # rdar://173243316
     def test_in_out_variables(self):
         """Test that @inout variables display reasonably"""
         self.build()

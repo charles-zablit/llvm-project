@@ -5,7 +5,7 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestSwiftSubmoduleImport(lldbtest.TestBase):
     @swiftTest
-    @expectedFailureWindows
+    @skipIfWindows # rdar://173245705
     def test(self):
         """Test imports of Clang submodules"""
         self.build()

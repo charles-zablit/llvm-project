@@ -21,7 +21,7 @@ import os
 
 class TestSwiftArchetypeResolution(TestBase):
     @swiftTest
-    @expectedFailureWindows
+    @skipIfWindows # rdar://173245096
     def test_swift_archetype_resolution(self):
         """Test that archetype-typed objects get resolved to their proper location in memory"""
         self.build()

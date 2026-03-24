@@ -21,7 +21,6 @@ import os
 
 class TestSwiftMetatype(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_metatype(self):
         """Test the formatting of Swift metatypes"""
         self.build()

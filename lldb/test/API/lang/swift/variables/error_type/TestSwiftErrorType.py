@@ -16,7 +16,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestSwiftErrorType(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test(self):
         """Test handling of Swift Error types"""
         self.build()

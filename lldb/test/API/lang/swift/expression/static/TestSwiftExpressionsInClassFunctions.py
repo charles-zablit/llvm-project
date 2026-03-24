@@ -21,7 +21,6 @@ import os
 
 class TestSwiftExpressionsInClassFunctions(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_expressions_in_class_functions(self):
         """Test expressions in class func contexts"""
         self.build()

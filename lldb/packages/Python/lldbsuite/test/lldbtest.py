@@ -743,6 +743,8 @@ class Base(unittest.TestCase):
 
     def getBuildArtifact(self, name="a.out"):
         """Return absolute path to an artifact in the test's build directory."""
+        if name is None:
+            name = "a.exe" if sys.platform == "win32" else "a.out"
         return os.path.join(self.getBuildDir(), name)
 
     def getSourcePath(self, name):
@@ -807,9 +809,12 @@ class Base(unittest.TestCase):
 
         # Set environment variables for the inferior.
         if lldbtest_config.inferior_env:
-            commands.append(
-                "settings set target.env-vars {}".format(lldbtest_config.inferior_env)
-            )
+            for kv in lldbtest_config.inferior_env:
+                k, _, v = kv.partition("=")
+                if any(c in v for c in (" ", ";")):
+                    v = '"{}"'.format(v.replace('"', '\\"'))
+                    kv = "{}={}".format(k, v)
+                    commands.append("settings set target.env-vars {}".format(kv))
         return commands
 
     def setUp(self):

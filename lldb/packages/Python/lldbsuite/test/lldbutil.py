@@ -862,9 +862,12 @@ def run_to_breakpoint_make_target(test, exe_name="a.out", in_cwd=True):
 
     # Set environment variables for the inferior.
     if lldbtest_config.inferior_env:
-        test.runCmd(
-            "settings set target.env-vars {}".format(lldbtest_config.inferior_env)
-        )
+        for kv in lldbtest_config.inferior_env:
+            k, _, v = kv.partition("=")
+            if any(c in v for c in (" ", ";")):
+                v = '"{}"'.format(v.replace('"', '\\"'))
+                kv = "{}={}".format(k, v)
+                test.runCmd("settings set target.env-vars {}".format(kv))
 
     return target
 

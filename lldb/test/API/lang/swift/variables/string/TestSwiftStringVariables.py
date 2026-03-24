@@ -24,7 +24,6 @@ import os
 
 class TestSwiftStringVariables(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_swift_string_variables(self):
         """Test that Swift.String formats properly"""
         self.build()

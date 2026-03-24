@@ -21,7 +21,6 @@ import os
 
 class TestEnumVariables(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_enum_variables(self):
         """Tests that Enum variables display correctly"""
         self.build()

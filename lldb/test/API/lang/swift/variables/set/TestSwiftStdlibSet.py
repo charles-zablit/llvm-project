@@ -21,7 +21,7 @@ import os
 
 class TestSwiftStdlibSet(TestBase):
     @swiftTest
-    @expectedFailureWindows
+    @skipIfWindows # rdar://173243316
     def test_swift_stdlib_set(self):
         """Tests that we properly vend synthetic children for Swift.Set"""
         self.build()

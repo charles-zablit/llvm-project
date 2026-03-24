@@ -10,7 +10,6 @@ from lldbsuite.test import lldbutil
 
 class TestCase(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_enable_persistent_result(self):
         """Test explicitly enabling result variables persistence."""
         self.build()
@@ -22,7 +21,6 @@ class TestCase(TestBase):
         self.expect("expression $R0", startstr="(Int) $R1 = 30")
 
     @swiftTest
-    @expectedFailureWindows
     def test_disable_persistent_result(self):
         """Test explicitly disabling persistent result variables."""
         self.build()
@@ -34,7 +32,6 @@ class TestCase(TestBase):
         self.expect("expression $R0", error=True)
 
     @swiftTest
-    @expectedFailureWindows
     def test_expression_persists_result(self):
         """Test `expression`'s default behavior is to persist a result variable."""
         self.build()
@@ -45,7 +42,6 @@ class TestCase(TestBase):
         self.expect("expression $R0", startstr="(Int) $R1 = 30")
 
     @swiftTest
-    @expectedFailureWindows
     def test_p_does_not_persist_results(self):
         """Test `p` does not persist a result variable."""
         self.build()

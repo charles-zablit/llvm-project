@@ -19,7 +19,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestSwiftGenericExtension(TestBase):
      @swiftTest
-     @expectedFailureWindows
      def test(self):
         self.build()
 

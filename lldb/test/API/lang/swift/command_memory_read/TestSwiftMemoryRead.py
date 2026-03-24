@@ -6,7 +6,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestCase(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_scalar_types(self):
         self.build()
         _, _, thread, _ = lldbutil.run_to_source_breakpoint(
@@ -36,7 +35,6 @@ class TestCase(TestBase):
             )
 
     @swiftTest
-    @expectedFailureWindows
     @expectedFailureAll
     def test_generic_types(self):
         self.build()

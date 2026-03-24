@@ -38,7 +38,6 @@ class TestSwiftNestedArray(TestBase):
         self.main_source_spec = lldb.SBFileSpec(self.main_source)
 
     @swiftTest
-    @expectedFailureWindows
     def test_swift_nested_array(self):
         """Test Arrays of Arrays in Swift"""
         self.build()

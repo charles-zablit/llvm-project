@@ -18,7 +18,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestSwiftGenericExtension(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test(self):
         self.build()
         lldbutil.run_to_source_breakpoint(

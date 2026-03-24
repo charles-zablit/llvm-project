@@ -21,7 +21,6 @@ import os
 
 class TestSwiftGenericTypes(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_swift_generic_types(self):
         """Test support for generic types"""
         self.build()

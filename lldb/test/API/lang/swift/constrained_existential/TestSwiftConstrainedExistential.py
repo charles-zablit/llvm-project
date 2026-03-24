@@ -6,7 +6,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestSwiftConstrainedExistential(lldbtest.TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test(self):
         """Test constrained existential types"""
 

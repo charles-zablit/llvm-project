@@ -20,7 +20,6 @@ import os
 
 class TestSwiftBacktracePrinting(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_swift_backtrace_printing(self):
         """Test printing Swift backtrace"""
         self.build()

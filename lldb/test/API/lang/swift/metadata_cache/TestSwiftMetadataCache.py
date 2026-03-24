@@ -41,7 +41,6 @@ class TestSwiftMetadataCache(TestBase):
             
         
     @swiftTest
-    @expectedFailureWindows
     def test_swift_metadata_cache(self):
         """Test the swift metadata cache."""
         

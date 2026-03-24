@@ -45,7 +45,6 @@ class TestSwiftAddressOf(lldbtest.TestBase):
 
         
     @swiftTest
-    @expectedFailureWindows
     def test(self):
         self.build()
 

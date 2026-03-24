@@ -7,7 +7,6 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestArchetypeInExpression(TestBase):
 
     @swiftTest
-    @expectedFailureWindows
     def test(self):
         """Tests that a user can refer to the archetypes in their expressions"""         
         self.build()

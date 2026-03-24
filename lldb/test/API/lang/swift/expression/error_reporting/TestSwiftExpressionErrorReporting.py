@@ -7,7 +7,6 @@ class TestSwiftExpressionErrorReporting(TestBase):
     NO_DEBUG_INFO_TESTCASE = True
 
     @swiftTest
-    @expectedFailureWindows
     def test_missing_location(self):
         self.build()
         target, process, thread, bkpt = lldbutil.run_to_source_breakpoint(
@@ -35,7 +34,6 @@ class TestSwiftExpressionErrorReporting(TestBase):
         )
 
     @swiftTest
-    @expectedFailureWindows
     def test_missing_var(self):
         """Test error reporting in expressions reports
         only diagnostics in user code"""
@@ -90,7 +88,6 @@ class TestSwiftExpressionErrorReporting(TestBase):
         check(value)
 
     @swiftTest
-    @expectedFailureWindows
     def test_missing_type(self):
         """Test error reporting in expressions reports
         only diagnostics in user code"""

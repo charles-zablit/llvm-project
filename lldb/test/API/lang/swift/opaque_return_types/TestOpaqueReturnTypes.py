@@ -6,7 +6,6 @@ lldbinline.MakeInlineTest(
     globals(),
     decorators=[
         swiftTest,
-        expectedFailureWindows,
         skipIf(macos_version=["<", "10.15"]),
     ],
 )

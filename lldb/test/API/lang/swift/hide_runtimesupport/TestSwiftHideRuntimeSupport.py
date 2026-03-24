@@ -21,7 +21,6 @@ import os
 
 class TestSwiftHideRuntimeSupport(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_swift_hide_runtime_support(self):
         """Test that we hide runtime support values"""
 

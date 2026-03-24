@@ -25,7 +25,7 @@ else
 endif
 
 ifeq "$(OS)" "Windows_NT"
-	SWIFT_DEBUG_INFO_FLAG ?= -g
+	SWIFT_DEBUG_INFO_FLAG ?= -g -use-ld=lld -Xlinker -debug:dwarf
 else
 	SWIFT_DEBUG_INFO_FLAG ?= $(DEBUG_INFO_FLAG)
 endif

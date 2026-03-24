@@ -237,7 +237,7 @@ def parseOptionsAndInitTestdirs():
                 os.environ[parts[0]] = parts[1]
 
     if args.set_inferior_env_vars:
-        lldbtest_config.inferior_env = " ".join(args.set_inferior_env_vars)
+        lldbtest_config.inferior_env = args.set_inferior_env_vars
 
     if args.h:
         do_help = True
@@ -323,6 +323,8 @@ def parseOptionsAndInitTestdirs():
     # Set SDKROOT if we are using an Apple SDK
     if args.sysroot:
         configuration.sdkroot = args.sysroot
+        if sys.platform == "win32":
+            os.environ["SDKROOT"] = args.sysroot
     elif platform_system == "Darwin" and args.apple_sdk:
         configuration.sdkroot = seven.get_command_output(
             'xcrun --sdk "%s" --show-sdk-path 2> /dev/null' % (args.apple_sdk)
@@ -351,6 +353,21 @@ def parseOptionsAndInitTestdirs():
 
     if args.swiftcompiler:
         configuration.swiftCompiler = args.swiftcompiler
+
+        # On Windows, the Swift runtime DLLs (swiftCore.dll etc.) live alongside
+        # swiftc. Automatically add that directory to the inferior's PATH so that
+        # Swift test binaries can find them at launch.
+        if sys.platform == "win32":
+            swift_bin_dir = os.path.dirname(
+                os.path.abspath(configuration.swiftCompiler)
+            )
+            path_entry = f"PATH={swift_bin_dir};{os.environ['PATH']}"
+            if lldbtest_config.inferior_env is None:
+                lldbtest_config.inferior_env = [path_entry]
+            else:
+                lldbtest_config.inferior_env = list(lldbtest_config.inferior_env) + [
+                    path_entry
+                ]
 
     if args.xfail_categories:
         configuration.xfail_categories += test_categories.validate(

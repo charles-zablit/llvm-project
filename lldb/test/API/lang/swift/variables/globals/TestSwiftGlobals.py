@@ -21,7 +21,6 @@ import os
 
 class TestSwiftGlobals(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_swift_globals(self):
         """Check that we can examine module globals in the expression parser"""
         self.build()

@@ -16,7 +16,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestClosureShortcuts(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test(self):
         self.build()
         target, process, thread, bkpt = lldbutil.run_to_source_breakpoint(

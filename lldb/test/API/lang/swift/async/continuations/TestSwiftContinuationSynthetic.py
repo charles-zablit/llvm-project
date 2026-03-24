@@ -8,7 +8,6 @@ from lldbsuite.test import lldbutil
 class TestCase(TestBase):
 
     @swiftTest
-    @expectedFailureWindows
     def test_unsafe_continuation_printing(self):
         """Print an UnsafeContinuation and verify its children."""
         self.build()

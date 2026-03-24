@@ -12,7 +12,7 @@ import os
 
 class TestSwiftHashedContainerEnum(TestBase):
     @swiftTest
-    @expectedFailureWindows
+    @skipIfWindows # rdar://173243316
     def test_any_object_type(self):
         """Test combinations of hashed swift containers with enums"""
         self.build()

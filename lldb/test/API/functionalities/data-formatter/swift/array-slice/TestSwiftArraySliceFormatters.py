@@ -9,7 +9,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestCase(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_swift_array_slice_formatters(self):
         """Test ArraySlice synthetic types."""
         self.build()

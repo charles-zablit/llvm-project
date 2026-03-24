@@ -21,7 +21,6 @@ import os
 
 class TestSwiftOneCaseEnum(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_swift_one_case_enum(self):
         """Test that an enum with only one case does not crash LLDB"""
         self.build()

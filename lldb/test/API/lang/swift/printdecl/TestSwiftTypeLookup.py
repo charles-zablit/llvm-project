@@ -21,7 +21,6 @@ import os
 
 class TestSwiftTypeLookup(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_swift_type_lookup(self):
         """Test the ability to look for type definitions at the command line"""
         self.build()

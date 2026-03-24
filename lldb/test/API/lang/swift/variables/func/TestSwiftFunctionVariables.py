@@ -20,7 +20,7 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestFunctionVariables(TestBase):
     @swiftTest
-    @expectedFailureWindows
+    @skipIfWindows # rdar://173245096
     def test_function_variables(self):
         """Tests that function type variables display correctly"""
         self.build()

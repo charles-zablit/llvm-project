@@ -7,7 +7,6 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftGlobalOpaque(TestBase):
 
     @swiftTest
-    @expectedFailureWindows
     def test(self):
         """Tests that a type bound to an opaque archetype can be resolved correctly"""         
         self.build()

@@ -4,7 +4,6 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestSwiftTypeAliasRecurtsive(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test(self):
         """Test that type aliases of type aliases can be resolved"""
         self.build()

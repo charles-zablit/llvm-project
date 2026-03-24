@@ -7,7 +7,6 @@ import os
 
 class TestSwiftExpressionActor(TestBase):
     @swiftTest
-    @expectedFailureWindows
     def test_static_func(self):
         self.build()
         lldbutil.run_to_source_breakpoint(
@@ -17,7 +16,6 @@ class TestSwiftExpressionActor(TestBase):
         self.expect("expr self", substrs=["A.Type"])
 
     @swiftTest
-    @expectedFailureWindows
     def test_func(self):
         self.build()
         lldbutil.run_to_source_breakpoint(
