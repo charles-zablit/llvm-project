@@ -35,11 +35,13 @@
 
 #ifdef _WIN32
 #include "lldb/Host/windows/PythonPathSetup/PythonPathSetup.h"
+#include "lldb/Host/windows/windows.h"
 #endif
 
 #include <algorithm>
 #include <atomic>
 #include <bitset>
+#include <chrono>
 #include <clocale>
 #include <csignal>
 #include <future>
@@ -649,10 +651,8 @@ void Driver::UpdateWindowSize() {
       ::ioctl(STDIN_FILENO, TIOCGWINSZ, &window_size) == 0) {
     if (window_size.ws_col > 0)
       m_debugger.SetTerminalWidth(window_size.ws_col);
-#ifndef _WIN32
     if (window_size.ws_row > 0)
       m_debugger.SetTerminalHeight(window_size.ws_row);
-#endif
   }
 }
 
@@ -788,7 +788,28 @@ int main(int argc, char const *argv[]) {
 
   //  FIXME: Migrate the SIGINT handler to be handled by the signal loop below.
   signal(SIGINT, sigint_handler);
-#if !defined(_WIN32)
+#if defined(_WIN32)
+  // Windows has no SIGWINCH. Poll the console viewport size in a background
+  // thread and call UpdateWindowSize() whenever it changes.
+  std::atomic<bool> stop_resize_thread(false);
+  std::thread resize_thread([&]() {
+    SHORT last_cols = 0, last_rows = 0;
+    while (!stop_resize_thread) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(200));
+      CONSOLE_SCREEN_BUFFER_INFO info;
+      if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
+        SHORT cols = info.srWindow.Right - info.srWindow.Left + 1;
+        SHORT rows = info.srWindow.Bottom - info.srWindow.Top + 1;
+        if (cols != last_cols || rows != last_rows) {
+          last_cols = cols;
+          last_rows = rows;
+          if (g_driver)
+            g_driver->UpdateWindowSize();
+        }
+      }
+    }
+  });
+#else
   signal(SIGPIPE, SIG_IGN);
 
   // Handle signals in a MainLoop running on a separate thread.
@@ -865,7 +886,10 @@ int main(int argc, char const *argv[]) {
     future.wait();
   }
 
-#if !defined(_WIN32)
+#if defined(_WIN32)
+  stop_resize_thread = true;
+  resize_thread.join();
+#else
   // Try to interrupt the signal thread.  If that succeeds, wait for it to exit.
   if (signal_loop.AddPendingCallback(
           [](MainLoopBase &loop) { loop.RequestTermination(); }))

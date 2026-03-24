@@ -2173,13 +2173,17 @@ bool Debugger::IsEscapeCodeCapableTTY() {
 }
 
 bool Debugger::StatuslineSupported() {
-// We have trouble with the contol codes on Windows, see
-// https://github.com/llvm/llvm-project/issues/134846.
-#ifndef _WIN32
-  return GetShowStatusline() && IsEscapeCodeCapableTTY();
-#else
-  return false;
+#ifdef _WIN32
+  // The statusline uses DECSTBM (set scrolling region) and DECSC/DECRC (save/
+  // restore cursor), which are implemented correctly in Windows Terminal but
+  // are broken in the legacy conhost used by CMD and PowerShell windows.
+  // Windows Terminal sets the WT_SESSION environment variable; only enable the
+  // statusline when that variable is present.
+  // See https://github.com/llvm/llvm-project/issues/134846.
+  if (!std::getenv("WT_SESSION"))
+    return false;
 #endif
+  return GetShowStatusline() && IsEscapeCodeCapableTTY();
 }
 
 static bool RequiresFollowChildWorkaround(const Process &process) {
