@@ -45,7 +45,13 @@ protected:
   lldb::addr_t GetLoadAddress(lldb::ModuleSP executable);
 
 private:
-  std::map<lldb::ModuleSP, lldb::addr_t> m_loaded_modules;
+  // Maps load address → module.  Using the address as the key (rather than
+  // the module) lets us track the same module at multiple concurrent load
+  // addresses.  On Windows a DLL can appear at more than one address during
+  // process startup (e.g. a temporary loader mapping followed by the final
+  // ASLR mapping), and we must not clear section load addresses until the
+  // *last* active address for a module is unloaded.
+  std::map<lldb::addr_t, lldb::ModuleSP> m_loaded_modules;
 };
 
 } // namespace lldb_private

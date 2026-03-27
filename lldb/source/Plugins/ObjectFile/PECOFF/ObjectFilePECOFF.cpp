@@ -473,6 +473,9 @@ bool ObjectFilePECOFF::ParseHeader() {
 
 bool ObjectFilePECOFF::SetLoadAddress(Target &target, addr_t value,
                                       bool value_is_offset) {
+  Log *log = GetLog(LLDBLog::Modules);
+    LLDB_LOG(log, "PECOFF::SetLoadAddress (tid={0}) for {1}",
+             llvm::get_threadid(), GetFileSpec().GetFilename());
   bool changed = false;
   ModuleSP module_sp = GetModule();
   if (module_sp) {
@@ -495,8 +498,18 @@ bool ObjectFilePECOFF::SetLoadAddress(Target &target, addr_t value,
                   section_sp, section_sp->GetFileAddress() + value))
             ++num_loaded_sections;
         }
+        if (sect_idx == 0) {
+          Log *log = GetLog(LLDBLog::Modules);
+          LLDB_LOG(log, "SetLoadAddress: objfile={0:x} section[0]={1:x} addr={2:x} for {3}",
+                  (uintptr_t)this, (uintptr_t)section_sp.get(),
+                  section_sp->GetFileAddress() + value,
+                  GetFileSpec().GetFilename());
+        }
       }
       changed = num_loaded_sections > 0;
+      LLDB_LOG(log, "PECOFF::SetLoadAddress done (tid={0}): {1}/{2} sections loaded for {3}",
+            llvm::get_threadid(), num_loaded_sections, num_sections,
+            GetFileSpec().GetFilename());
     }
   }
   return changed;
@@ -1033,12 +1046,25 @@ size_t ObjectFilePECOFF::GetSectionDataSize(Section *section) {
 }
 
 void ObjectFilePECOFF::CreateSections(SectionList &unified_section_list) {
+  Log *log = GetLog(LLDBLog::Modules);
+  LLDB_LOG(log, "CreateSections entry (tid={0}) m_sections_up={1}",
+            llvm::get_threadid(), (bool)m_sections_up);
   if (m_sections_up)
     return;
-  m_sections_up = std::make_unique<SectionList>();
   ModuleSP module_sp(GetModule());
   if (module_sp) {
     std::lock_guard<std::recursive_mutex> guard(module_sp->GetMutex());
+    // Re-check inside the lock: another thread (e.g. a background symtab
+    // parser calling Module::GetSectionList()) may have raced here without
+    // holding the outer lock from ObjectFile::GetSectionList(), built its own
+    // SectionList, and assigned m_sections_up after we read nullptr above.
+    // Both the re-check and the final assignment must be inside the lock so
+    // that the winner's SectionSP objects are the ones registered in the
+    // target's SectionLoadList and later returned by GetBaseAddress().
+    if (m_sections_up)
+      return;
+
+    auto sections_up = std::make_unique<SectionList>();
 
     SectionSP header_sp = std::make_shared<Section>(
         module_sp, this, ~user_id_t(0), ConstString("PECOFF header"),
@@ -1048,7 +1074,7 @@ void ObjectFilePECOFF::CreateSections(SectionList &unified_section_list) {
         m_coff_header_opt.sect_alignment,
         /*flags*/ 0);
     header_sp->SetPermissions(ePermissionsReadable);
-    m_sections_up->AddSection(header_sp);
+    sections_up->AddSection(header_sp);
     unified_section_list.AddSection(header_sp);
 
     const uint32_t nsects = m_sect_headers.size();
@@ -1083,9 +1109,14 @@ void ObjectFilePECOFF::CreateSections(SectionList &unified_section_list) {
         permissions |= ePermissionsWritable;
       section_sp->SetPermissions(permissions);
 
-      m_sections_up->AddSection(section_sp);
+      sections_up->AddSection(section_sp);
       unified_section_list.AddSection(section_sp);
     }
+    // Assign inside the lock so that any concurrent thread that acquires
+    // the lock after us is guaranteed to see the fully-populated list.
+    m_sections_up = std::move(sections_up);
+    LLDB_LOG(log, "CreateSections done (tid={0}) sections={1}",
+      llvm::get_threadid(), m_sections_up->GetNumSections(0));
   }
 }
 

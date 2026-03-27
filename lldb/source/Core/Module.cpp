@@ -1363,10 +1363,18 @@ ObjectFile *Module::GetObjectFile() {
 
 SectionList *Module::GetSectionList() {
   // Populate m_sections_up with sections from objfile.
+  std::lock_guard<std::recursive_mutex> guard(m_mutex);
   if (!m_sections_up) {
     ObjectFile *obj_file = GetObjectFile();
     if (obj_file != nullptr)
       obj_file->CreateSections(*GetUnifiedSectionList());
+  }
+  // NEW: detect the race — non-null but empty list
+  if (m_sections_up && m_sections_up->GetNumSections(0) == 0) {
+    Log *log = GetLog(LLDBLog::Modules);
+    LLDB_LOG(log,
+              "RACE: GetSectionList returning empty SectionList (tid={0}) for {1}",
+              llvm::get_threadid(), GetFileSpec().GetFilename());
   }
   return m_sections_up.get();
 }
@@ -1386,8 +1394,12 @@ UnwindTable &Module::GetUnwindTable() {
 }
 
 SectionList *Module::GetUnifiedSectionList() {
-  if (!m_sections_up)
+  if (!m_sections_up) {
+    Log *log = GetLog(LLDBLog::Modules);
+    LLDB_LOG(log, "GetUnifiedSectionList creating empty SectionList (tid={0}) for {1}",
+              llvm::get_threadid(), GetFileSpec().GetFilename());
     m_sections_up = std::make_unique<SectionList>();
+  }
   return m_sections_up.get();
 }
 
@@ -1658,6 +1670,10 @@ bool Module::SetArchitecture(const ArchSpec &new_arch) {
 bool Module::SetLoadAddress(Target &target, lldb::addr_t value,
                             bool value_is_offset, bool &changed) {
   ObjectFile *object_file = GetObjectFile();
+  Log *log = GetLog(LLDBLog::Modules);
+      LLDB_LOG(log, "SetLoadAddress (tid={0}) objfile={1} for {2}",
+              llvm::get_threadid(), (void *)object_file,
+              GetFileSpec().GetFilename());
   if (object_file != nullptr) {
     changed = object_file->SetLoadAddress(target, value, value_is_offset);
     return true;

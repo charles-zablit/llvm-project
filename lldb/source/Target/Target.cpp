@@ -3392,14 +3392,13 @@ bool Target::SetSectionLoadAddress(const SectionSP &section_sp,
       m_section_load_history.GetSectionLoadAddress(
           SectionLoadHistory::eStopIDNow, section_sp);
   if (old_section_load_addr != new_section_load_addr) {
-    uint32_t stop_id = 0;
-    ProcessSP process_sp(GetProcessSP());
-    if (process_sp)
-      stop_id = process_sp->GetStopID();
-    else
-      stop_id = m_section_load_history.GetLastStopID();
-    if (m_section_load_history.SetSectionLoadAddress(
-            stop_id, section_sp, new_section_load_addr, warn_multiple))
+    // Use the atomic variant that reads the latest stop ID inside the history
+    // lock.  The naive approach of reading process->GetStopID() here (outside
+    // the lock) opens a race: a concurrent thread can create a new snapshot by
+    // copying the current (still-incomplete) one before we write, leaving the
+    // new snapshot without this section's load address.
+    if (m_section_load_history.SetSectionLoadAddressAtLatestStopID(
+            section_sp, new_section_load_addr, warn_multiple))
       return true; // Return true if the section load address was changed...
   }
   return false; // Return false to indicate nothing changed

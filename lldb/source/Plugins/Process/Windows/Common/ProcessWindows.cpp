@@ -682,23 +682,29 @@ void ProcessWindows::OnDebuggerConnected(lldb::addr_t image_base) {
 
   ModuleSP module;
   // During attach, we won't have the executable module, so find it now.
-  const DWORD pid = debugger->GetProcess().GetProcessId();
-  const std::string file_name = GetProcessExecutableName(pid);
-  if (file_name.empty()) {
-    return;
-  }
-
-  FileSpec executable_file(file_name);
-  FileSystem::Instance().Resolve(executable_file);
-  ModuleSpec module_spec(executable_file);
-  Status error;
-  module =
-      GetTarget().GetOrCreateModule(module_spec, true /* notify */, &error);
+  // During launch, the target already has the executable module set (with
+  // whatever path the user specified, e.g. a subst-drive path on Windows).
+  // Reuse it to avoid creating a duplicate Module for the same on-disk file.
+  module = GetTarget().GetExecutableModule();
   if (!module) {
-    return;
-  }
+    const DWORD pid = debugger->GetProcess().GetProcessId();
+    const std::string file_name = GetProcessExecutableName(pid);
+    if (file_name.empty()) {
+      return;
+    }
 
-  GetTarget().SetExecutableModule(module, eLoadDependentsNo);
+    FileSpec executable_file(file_name);
+    FileSystem::Instance().Resolve(executable_file);
+    ModuleSpec module_spec(executable_file);
+    Status error;
+    module =
+        GetTarget().GetOrCreateModule(module_spec, true /* notify */, &error);
+    if (!module) {
+      return;
+    }
+
+    GetTarget().SetExecutableModule(module, eLoadDependentsNo);
+  }
 
   if (auto dyld = GetDynamicLoader())
     dyld->OnLoadModule(module, ModuleSpec(), image_base);

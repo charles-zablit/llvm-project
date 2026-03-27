@@ -134,6 +134,22 @@ bool SectionLoadHistory::SetSectionLoadAddress(
                                                   warn_multiple);
 }
 
+bool SectionLoadHistory::SetSectionLoadAddressAtLatestStopID(
+    const lldb::SectionSP &section_sp, addr_t load_addr, bool warn_multiple) {
+  std::lock_guard<std::recursive_mutex> guard(m_mutex);
+  // Read the latest stop ID inside the lock so that no concurrent thread can
+  // create a newer snapshot between our stop-ID read and our write.  Writing
+  // directly to the latest snapshot guarantees the "current" view always
+  // includes this registration.
+  uint32_t stop_id = m_stop_id_to_section_load_list.empty()
+                         ? 0
+                         : m_stop_id_to_section_load_list.rbegin()->first;
+  SectionLoadList *section_load_list =
+      GetSectionLoadListForStopID(stop_id, /*read_only=*/false);
+  return section_load_list->SetSectionLoadAddress(section_sp, load_addr,
+                                                  warn_multiple);
+}
+
 size_t
 SectionLoadHistory::SetSectionUnloaded(uint32_t stop_id,
                                        const lldb::SectionSP &section_sp) {

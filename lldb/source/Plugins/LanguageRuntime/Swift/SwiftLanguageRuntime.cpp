@@ -353,7 +353,25 @@ void SwiftLanguageRuntime::ProcessModulesToAdd() {
 
   if (modules_to_add_snapshot.IsEmpty())
     return;
-
+  Log *log = GetLog(LLDBLog::Types);
+  if (log) {
+    auto &target = GetProcess().GetTarget();
+    LLDB_LOGF(log, "ProcessModulesToAdd: %zu modules queued",
+              modules_to_add_snapshot.GetSize());
+    modules_to_add_snapshot.ForEach([&](const ModuleSP &m) -> IterationAction {
+      if (!m)
+        return IterationAction::Continue;
+      ObjectFile *of = m->GetObjectFile();
+      lldb::addr_t addr = LLDB_INVALID_ADDRESS;
+      if (of) {
+        Address base = of->GetBaseAddress();
+        addr = base.GetLoadAddress(&target);
+      }
+      LLDB_LOGF(log, "ProcessModulesToAdd:   %s  section[0] load=0x%" PRIx64,
+                m->GetFileSpec().GetFilename().AsCString("<?>"), addr);
+      return IterationAction::Continue;
+    });
+  }
   auto &target = GetProcess().GetTarget();
   auto exe_module = target.GetExecutableModule();
   Progress progress("Setting up Swift reflection", {},
@@ -516,6 +534,16 @@ void SwiftLanguageRuntime::ModulesDidLoad(const ModuleList &module_list) {
   // The modules will be lazily processed on the next call to
   // GetReflectionContext.
   m_modules_to_add.AppendIfNeeded(module_list);
+  Log *log = GetLog(LLDBLog::Types);
+  module_list.ForEach([&](const ModuleSP &m) -> IterationAction {
+    if (m) {
+      bool added = m_modules_to_add.AppendIfNeeded(m);
+      LLDB_LOGF(log, "SwiftLanguageRuntime::ModulesDidLoad: %s (%s)",
+                m->GetFileSpec().GetFilename().AsCString("<?>"),
+                added ? "queued" : "already queued");
+    }
+    return IterationAction::Continue;
+  });
   // This could be done more efficiently with a better reflection API.
   m_conformances.clear();
 }
@@ -743,6 +771,15 @@ bool SwiftLanguageRuntime::AddModuleToReflectionContext(
   Address start_address = obj_file->GetBaseAddress();
   auto load_ptr = static_cast<uintptr_t>(
       start_address.GetLoadAddress(&target));
+  {
+    SectionList *sl = obj_file->GetSectionList();
+    SectionSP s0 = sl ? sl->GetSectionAtIndex(0) : nullptr;
+    LLDB_LOG(GetLog(LLDBLog::Types),
+             "AddModuleToReflectionContext: objfile={0:x} section[0]={1:x} "
+             "load_ptr={2:x} for {3}",
+             (uintptr_t)obj_file, (uintptr_t)s0.get(), load_ptr,
+             module_sp->GetFileSpec().GetFilename());
+  }
   auto likely_module_names = GetLikelySwiftImageNamesForModule(module_sp);
   if (obj_file->GetType() == ObjectFile::eTypeJIT) {
     auto object_format_type =
@@ -752,12 +789,11 @@ bool SwiftLanguageRuntime::AddModuleToReflectionContext(
   }
 
   if (load_ptr == 0 || load_ptr == LLDB_INVALID_ADDRESS) {
-    if (obj_file->GetType() != ObjectFile::eTypeJIT)
-      LLDB_LOG(GetLog(LLDBLog::Types),
-               "{0}: failed to get start address for \"{1}\".", __FUNCTION__,
-               module_sp->GetObjectName()
-                   ? module_sp->GetObjectName()
-                   : obj_file->GetFileSpec().GetFilename());
+    LLDB_LOG(GetLog(LLDBLog::Types),
+              "{0}: failed to get start address for \"{1}\".", __FUNCTION__,
+              module_sp->GetObjectName()
+                  ? module_sp->GetObjectName()
+                  : obj_file->GetFileSpec().GetFilename());
     return false;
   }
   bool found = HasReflectionInfo(obj_file);

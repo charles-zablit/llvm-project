@@ -52,6 +52,15 @@ public:
                              lldb::addr_t load_addr,
                              bool warn_multiple = false);
 
+  /// Like SetSectionLoadAddress but atomically reads the latest stop ID and
+  /// writes to that snapshot under a single lock acquisition.  This avoids a
+  /// race where another thread creates a newer snapshot (by copying the
+  /// current one) between the caller's read of GetStopID() and the actual
+  /// write, leaving the new snapshot without this section's load address.
+  bool SetSectionLoadAddressAtLatestStopID(const lldb::SectionSP &section_sp,
+                                            lldb::addr_t load_addr,
+                                            bool warn_multiple = false);
+
   // The old load address should be specified when unloading to ensure we get
   // the correct instance of the section as a shared library could be loaded at
   // more than one location.

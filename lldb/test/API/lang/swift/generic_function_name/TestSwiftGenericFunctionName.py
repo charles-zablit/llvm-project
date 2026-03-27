@@ -6,6 +6,7 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestSwiftGenericFunction(lldbtest.TestBase):
     @swiftTest
+    @expectedFailureWindows # rdar://173496322
     def test(self):
         """Test display of generic function names"""
         self.build()

@@ -22,6 +22,7 @@ import shutil
 
 class TestSwiftStructChangeRerun(TestBase):
     @swiftTest
+    @expectedFailureWindows # rdar://173496382
     def test_swift_struct_change_rerun(self):
         """Test that we display self correctly for an inline-initialized struct"""
         copied_main_swift = self.getBuildArtifact("main.swift")

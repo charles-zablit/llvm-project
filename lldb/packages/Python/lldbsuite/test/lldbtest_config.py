@@ -10,7 +10,7 @@ Configuration options for lldbtest.py set by dotest.py during initialization
 # each string has the name of an lldb channel followed by
 # zero or more categories in that channel
 # ex. "gdb-remote packets"
-channels = []
+channels = ["lldb all"]
 
 # leave logs/traces even for successful test runs
 log_success = False
