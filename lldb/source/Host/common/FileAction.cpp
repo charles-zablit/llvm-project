@@ -51,8 +51,9 @@ bool FileAction::Close(int fd) {
   if (fd >= 0) {
     m_action = eFileActionClose;
     m_fd = fd;
+    return true;
   }
-  return m_fd >= 0;
+  return false;
 }
 
 bool FileAction::Duplicate(int fd, int dup_fd) {
@@ -61,8 +62,9 @@ bool FileAction::Duplicate(int fd, int dup_fd) {
     m_action = eFileActionDuplicate;
     m_fd = fd;
     m_arg = dup_fd;
+    return true;
   }
-  return m_fd >= 0;
+  return false;
 }
 
 void FileAction::Dump(Stream &stream) const {
