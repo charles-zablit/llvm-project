@@ -476,24 +476,10 @@ Status PlatformWindows::DisconnectRemote() {
 ProcessSP PlatformWindows::DebugProcess(ProcessLaunchInfo &launch_info,
                                         Debugger &debugger, Target &target,
                                         Status &error) {
-  // Windows has special considerations that must be followed when launching or
-  // attaching to a process.  The key requirement is that when launching or
-  // attaching to a process, you must do it from the same the thread that will
-  // go into a permanent loop which will then receive debug events from the
-  // process.  In particular, this means we can't use any of LLDB's generic
-  // mechanisms to do it for us, because it doesn't have the special knowledge
-  // required for setting up the background thread or passing the right flags.
-  //
-  // Another problem is that LLDB's standard model for debugging a process
-  // is to first launch it, have it stop at the entry point, and then attach to
-  // it.  In Windows this doesn't quite work, you have to specify as an
-  // argument to CreateProcess() that you're going to debug the process.  So we
-  // override DebugProcess here to handle this.  Launch operations go directly
-  // to the process plugin, and attach operations almost go directly to the
-  // process plugin (but we hijack the events first).  In essence, we
-  // encapsulate all the logic of Launching and Attaching in the process
-  // plugin, and PlatformWindows::DebugProcess is just a pass-through to get to
-  // the process plugin.
+  // Use ProcessGDBRemote (lldb-server) for local debugging. lldb-server is
+  // responsible for launching the inferior and handling Windows debug events
+  // from a dedicated debugger thread, satisfying the Windows requirement that
+  // the thread creating a debugged process also services its debug events.
 
   if (IsRemote()) {
     if (m_remote_platform_sp)
@@ -510,26 +496,26 @@ ProcessSP PlatformWindows::DebugProcess(ProcessLaunchInfo &launch_info,
     return Attach(attach_info, debugger, &target, error);
   }
 
+  // Use ProcessGDBRemote (via lldb-server) for local debugging.
+  launch_info.GetFlags().Set(eLaunchFlagDebug);
+
   ProcessSP process_sp =
-      target.CreateProcess(launch_info.GetListener(),
-                           launch_info.GetProcessPluginName(), nullptr, false);
+      target.CreateProcess(launch_info.GetListener(), "gdb-remote", nullptr,
+                           /*native=*/true);
+
+  if (!process_sp) {
+    error = Status::FromErrorString(
+        "CreateProcess() failed for gdb-remote process");
+    return process_sp;
+  }
 
   process_sp->HijackProcessEvents(launch_info.GetHijackListener());
-
-  // We need to launch and attach to the process.
-  launch_info.GetFlags().Set(eLaunchFlagDebug);
-  if (!process_sp)
-    return nullptr;
   error = process_sp->Launch(launch_info);
-#ifdef _WIN32
-  if (error.Success()) {
-    process_sp->SetPseudoConsoleHandle();
-  } else {
+  if (error.Fail()) {
     Log *log = GetLog(LLDBLog::Platform);
     LLDB_LOGF(log, "Platform::%s LaunchProcess() failed: %s", __FUNCTION__,
               error.AsCString());
   }
-#endif
 
   return process_sp;
 }
@@ -564,7 +550,7 @@ lldb::ProcessSP PlatformWindows::Attach(ProcessAttachInfo &attach_info,
 
   process_sp =
       target->CreateProcess(attach_info.GetListenerForProcess(debugger),
-                            attach_info.GetProcessPluginName(), nullptr, false);
+                            "gdb-remote", nullptr, /*native=*/true);
 
   process_sp->HijackProcessEvents(attach_info.GetHijackListener());
   if (process_sp)

@@ -93,23 +93,26 @@ ProcessSP ProcessWindows::CreateInstance(lldb::TargetSP target_sp,
   return ProcessSP(new ProcessWindows(target_sp, listener_sp));
 }
 
-static bool ShouldUseLLDBServer() {
-  llvm::StringRef use_lldb_server = ::getenv("LLDB_USE_LLDB_SERVER");
-  return use_lldb_server.equals_insensitive("on") ||
-         use_lldb_server.equals_insensitive("yes") ||
-         use_lldb_server.equals_insensitive("1") ||
-         use_lldb_server.equals_insensitive("true");
+static bool ShouldUseProcessWindows() {
+  // ProcessWindows is kept as an explicit fallback. Users who need the old
+  // in-process debugging path can set LLDB_USE_PROCESS_WINDOWS=1.
+  // By default, lldb-server (ProcessGDBRemote) is used instead.
+  llvm::StringRef use_process_windows = ::getenv("LLDB_USE_PROCESS_WINDOWS");
+  return use_process_windows.equals_insensitive("on") ||
+         use_process_windows.equals_insensitive("yes") ||
+         use_process_windows.equals_insensitive("1") ||
+         use_process_windows.equals_insensitive("true");
 }
 
 void ProcessWindows::Initialize() {
-  if (!ShouldUseLLDBServer()) {
+  if (ShouldUseProcessWindows()) {
     PluginManager::RegisterPlugin(GetPluginNameStatic(),
                                   GetPluginDescriptionStatic(), CreateInstance);
   }
 }
 
 void ProcessWindows::Terminate() {
-  if (!ShouldUseLLDBServer())
+  if (ShouldUseProcessWindows())
     PluginManager::UnregisterPlugin(CreateInstance);
 }
 
