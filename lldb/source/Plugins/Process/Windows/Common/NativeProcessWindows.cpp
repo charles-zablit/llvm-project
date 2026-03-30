@@ -421,6 +421,19 @@ NativeProcessWindows::GetFileLoadAddress(const llvm::StringRef &file_name,
       file_spec.GetPath().c_str(), GetID());
 }
 
+llvm::Expected<std::vector<NativeProcessProtocol::WindowsLibraryInfo>>
+NativeProcessWindows::GetLoadedLibraries() {
+  Status error = CacheLoadedModules();
+  if (error.Fail())
+    return llvm::createStringError(llvm::inconvertibleErrorCode(), "%s",
+                                   error.AsCString());
+  std::vector<WindowsLibraryInfo> result;
+  result.reserve(m_loaded_modules.size());
+  for (auto &it : m_loaded_modules)
+    result.push_back({it.first.GetPath(), it.second});
+  return result;
+}
+
 void NativeProcessWindows::OnExitProcess(uint32_t exit_code) {
   Log *log = GetLog(WindowsLog::Process);
   LLDB_LOG(log, "Process {0} exited with code {1}", GetID(), exit_code);
@@ -642,14 +655,17 @@ void NativeProcessWindows::OnExitThread(lldb::tid_t thread_id,
 
 void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
                                      lldb::addr_t module_addr) {
-  // Simply invalidate the cached loaded modules.
+  // Invalidate the cached module list and signal the GDB server that the
+  // module list has changed so it emits a `library:` key in the next T packet.
   if (!m_loaded_modules.empty())
     m_loaded_modules.clear();
+  SetModulesChanged();
 }
 
 void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr) {
   if (!m_loaded_modules.empty())
     m_loaded_modules.clear();
+  SetModulesChanged();
 }
 
 llvm::Expected<std::unique_ptr<NativeProcessProtocol>>

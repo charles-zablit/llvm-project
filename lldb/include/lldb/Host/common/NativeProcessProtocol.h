@@ -45,6 +45,12 @@ struct SVR4LibraryInfo {
   lldb::addr_t next;
 };
 
+/// Loaded library information for Windows-style qXfer:libraries:read responses.
+struct WindowsLibraryInfo {
+  std::string name;
+  lldb::addr_t base_addr;
+};
+
 // NativeProcessProtocol
 class NativeProcessProtocol {
 public:
@@ -142,6 +148,12 @@ public:
 
   virtual llvm::Expected<std::vector<SVR4LibraryInfo>>
   GetLoadedSVR4Libraries() {
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "Not implemented");
+  }
+
+  virtual llvm::Expected<std::vector<WindowsLibraryInfo>>
+  GetLoadedLibraries() {
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "Not implemented");
   }
@@ -264,8 +276,10 @@ public:
     memory_tagging = (1u << 6),
     savecore = (1u << 7),
     siginfo_read = (1u << 8),
+    /// Windows-style library list (qXfer:libraries:read)
+    libraries = (1u << 9),
 
-    LLVM_MARK_AS_BITMASK_ENUM(siginfo_read)
+    LLVM_MARK_AS_BITMASK_ENUM(libraries)
   };
 
   class Manager {
@@ -448,6 +462,22 @@ protected:
 
   // Extensions enabled per the last SetEnabledExtensions() call.
   Extension m_enabled_extensions;
+
+  /// Set when a module (DLL/SO) load or unload event occurs between stops.
+  /// GDBRemoteCommunicationServerLLGS checks this to include a `library:`
+  /// key in the next stop-reply T packet.
+  bool m_modules_changed = false;
+
+  /// Mark that the module list has changed since the last stop reply.
+  void SetModulesChanged() { m_modules_changed = true; }
+
+  /// Return true if the module list changed since the last stop reply, and
+  /// clear the flag.
+  bool GetAndClearModulesChanged() {
+    bool v = m_modules_changed;
+    m_modules_changed = false;
+    return v;
+  }
 
   // lldb_private::Host calls should be used to launch a process for debugging,
   // and then the process should be attached to. When attaching to a process

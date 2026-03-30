@@ -41,6 +41,10 @@ public:
 
     llvm::Expected<std::unique_ptr<NativeProcessProtocol>>
     Attach(lldb::pid_t pid, NativeDelegate &native_delegate) override;
+
+    Extension GetSupportedExtensions() const override {
+      return Extension::libraries;
+    }
   };
 
   Status Resume(const ResumeActionList &resume_actions) override;
@@ -94,6 +98,8 @@ public:
 
   Status GetFileLoadAddress(const llvm::StringRef &file_name,
                             lldb::addr_t &load_addr) override;
+
+  llvm::Expected<std::vector<WindowsLibraryInfo>> GetLoadedLibraries() override;
 
   // ProcessDebugger Overrides
   void OnExitProcess(uint32_t exit_code) override;
