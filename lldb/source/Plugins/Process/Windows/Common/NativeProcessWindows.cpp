@@ -140,11 +140,13 @@ Status NativeProcessWindows::Resume(const ResumeActionList &resume_actions) {
     ExceptionRecordSP active_exception =
         m_session_data->m_debugger->GetActiveException().lock();
     if (active_exception) {
-      // Resume the process and continue processing debug events.  Mask the
-      // exception so that from the process's view, there is no indication that
-      // anything happened.
-      m_session_data->m_debugger->ContinueAsyncException(
-          ExceptionResult::MaskException);
+      // For first-chance exceptions forward them to the application's handler;
+      // for second-chance exceptions (crashes) mask the exception so the
+      // process continues cleanly under the debugger's control.
+      ExceptionResult cont = m_active_exception_first_chance
+                                 ? ExceptionResult::SendToApplication
+                                 : ExceptionResult::MaskException;
+      m_session_data->m_debugger->ContinueAsyncException(cont);
     }
   } else {
     LLDB_LOG(log, "error: process {0} is in state {1}.  Returning...",
@@ -252,7 +254,10 @@ bool NativeProcessWindows::IsAlive() const {
 
 void NativeProcessWindows::SetStopReasonForThread(NativeThreadWindows &thread,
                                                   lldb::StopReason reason,
-                                                  std::string description) {
+                                                  std::string description,
+                                                  bool first_chance,
+                                                  uint64_t exc_code,
+                                                  llvm::ArrayRef<ULONG_PTR> exc_args) {
   SetCurrentThreadID(thread.GetID());
 
   ThreadStopInfo stop_info;
@@ -261,8 +266,13 @@ void NativeProcessWindows::SetStopReasonForThread(NativeThreadWindows &thread,
   stop_info.signo = SIGTRAP;
 
   if (reason == StopReason::eStopReasonException) {
-    stop_info.details.exception.type = 0;
-    stop_info.details.exception.data_count = 0;
+    stop_info.details.exception.type = exc_code;
+    stop_info.details.exception.first_chance = first_chance;
+    stop_info.details.exception.data_count =
+        std::min(exc_args.size(), (size_t)8);
+    for (uint32_t i = 0; i < stop_info.details.exception.data_count; ++i)
+      stop_info.details.exception.data[i] =
+          static_cast<uint64_t>(exc_args[i]);
   }
 
   thread.SetStopReason(stop_info, description);
@@ -270,7 +280,9 @@ void NativeProcessWindows::SetStopReasonForThread(NativeThreadWindows &thread,
 
 void NativeProcessWindows::StopThread(lldb::tid_t thread_id,
                                       lldb::StopReason reason,
-                                      std::string description) {
+                                      std::string description,
+                                      bool first_chance, uint64_t exc_code,
+                                      llvm::ArrayRef<ULONG_PTR> exc_args) {
   NativeThreadWindows *thread = GetThreadByID(thread_id);
   if (!thread)
     return;
@@ -281,7 +293,8 @@ void NativeProcessWindows::StopThread(lldb::tid_t thread_id,
     if (error.Fail())
       exit(1);
   }
-  SetStopReasonForThread(*thread, reason, description);
+  SetStopReasonForThread(*thread, reason, description, first_chance, exc_code,
+                         exc_args);
 }
 
 size_t NativeProcessWindows::UpdateThreads() { return m_threads.size(); }
@@ -575,22 +588,23 @@ NativeProcessWindows::OnDebugException(bool first_chance,
     {
       std::string desc;
       llvm::raw_string_ostream desc_stream(desc);
-      desc_stream << "Exception "
+      desc_stream << (first_chance ? "(first-chance) " : "")
+                  << "Exception "
                   << llvm::format_hex(record.GetExceptionCode(), 8)
                   << " encountered at address "
                   << llvm::format_hex(record.GetExceptionAddress(), 8);
+      m_active_exception_first_chance = first_chance;
       StopThread(record.GetThreadID(), StopReason::eStopReasonException,
-                 desc.c_str());
+                 desc.c_str(), first_chance, record.GetExceptionCode(),
+                 record.GetExceptionArguments());
 
       SetState(eStateStopped, true);
     }
 
-    // For non-breakpoints, give the application a chance to handle the
-    // exception first.
-    if (first_chance)
-      result = ExceptionResult::SendToApplication;
-    else
-      result = ExceptionResult::BreakInDebugger;
+    // Stop in the debugger regardless of first vs second chance. When the user
+    // resumes, Resume() will forward first-chance exceptions to the application
+    // (SendToApplication) and mask second-chance ones (MaskException).
+    result = ExceptionResult::BreakInDebugger;
   }
 
   return result;

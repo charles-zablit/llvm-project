@@ -117,14 +117,20 @@ protected:
   bool FindSoftwareBreakpoint(lldb::addr_t addr);
 
   void StopThread(lldb::tid_t thread_id, lldb::StopReason reason,
-                  std::string description = "");
+                  std::string description = "", bool first_chance = false,
+                  uint64_t exc_code = 0,
+                  llvm::ArrayRef<ULONG_PTR> exc_args = {});
 
   void SetStopReasonForThread(NativeThreadWindows &thread,
                               lldb::StopReason reason,
-                              std::string description = "");
+                              std::string description = "",
+                              bool first_chance = false,
+                              uint64_t exc_code = 0,
+                              llvm::ArrayRef<ULONG_PTR> exc_args = {});
 
 private:
   ArchSpec m_arch;
+  bool m_active_exception_first_chance = false;
 
   NativeProcessWindows(ProcessLaunchInfo &launch_info, NativeDelegate &delegate,
                        llvm::Error &E);

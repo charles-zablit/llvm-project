@@ -392,7 +392,8 @@ protected:
                     lldb::addr_t thread_dispatch_qaddr, bool queue_vars_valid,
                     lldb_private::LazyBool associated_with_libdispatch_queue,
                     lldb::addr_t dispatch_queue_t, std::string &queue_name,
-                    lldb::QueueKind queue_kind, uint64_t queue_serial);
+                    lldb::QueueKind queue_kind, uint64_t queue_serial,
+                    bool exc_first_chance = false);
 
   void ClearThreadIDList();
 

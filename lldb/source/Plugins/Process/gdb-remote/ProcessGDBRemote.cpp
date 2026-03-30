@@ -1770,7 +1770,8 @@ ThreadSP ProcessGDBRemote::SetThreadStopInfo(
     bool queue_vars_valid, // Set to true if queue_name, queue_kind and
                            // queue_serial are valid
     LazyBool associated_with_dispatch_queue, addr_t dispatch_queue_t,
-    std::string &queue_name, QueueKind queue_kind, uint64_t queue_serial) {
+    std::string &queue_name, QueueKind queue_kind, uint64_t queue_serial,
+    bool exc_first_chance) {
 
   if (tid == LLDB_INVALID_THREAD_ID)
     return nullptr;
@@ -2108,6 +2109,7 @@ ProcessGDBRemote::SetThreadStopInfo(StructuredData::Dictionary *thread_dict) {
   static constexpr llvm::StringLiteral g_key_reason("reason");
   static constexpr llvm::StringLiteral g_key_metype("metype");
   static constexpr llvm::StringLiteral g_key_medata("medata");
+  static constexpr llvm::StringLiteral g_key_mefirst("mefirst");
   static constexpr llvm::StringLiteral g_key_qaddr("qaddr");
   static constexpr llvm::StringLiteral g_key_dispatch_queue_t(
       "dispatch_queue_t");
@@ -2129,6 +2131,7 @@ ProcessGDBRemote::SetThreadStopInfo(StructuredData::Dictionary *thread_dict) {
   std::string description;
   uint32_t exc_type = 0;
   std::vector<addr_t> exc_data;
+  bool exc_first_chance = false;
   addr_t thread_dispatch_qaddr = LLDB_INVALID_ADDRESS;
   ExpeditedRegisterMap expedited_register_map;
   bool queue_vars_valid = false;
@@ -2143,7 +2146,8 @@ ProcessGDBRemote::SetThreadStopInfo(StructuredData::Dictionary *thread_dict) {
   // FIXME: we're silently ignoring invalid data here
   thread_dict->ForEach([this, &tid, &expedited_register_map, &thread_name,
                         &signo, &reason, &description, &exc_type, &exc_data,
-                        &thread_dispatch_qaddr, &queue_vars_valid,
+                        &exc_first_chance, &thread_dispatch_qaddr,
+                        &queue_vars_valid,
                         &associated_with_dispatch_queue, &dispatch_queue_t,
                         &queue_name, &queue_kind, &queue_serial_number](
                            llvm::StringRef key,
@@ -2163,6 +2167,8 @@ ProcessGDBRemote::SetThreadStopInfo(StructuredData::Dictionary *thread_dict) {
           return true; // Keep iterating through all array items
         });
       }
+    } else if (key == g_key_mefirst) {
+      exc_first_chance = object->GetBooleanValue();
     } else if (key == g_key_name) {
       thread_name = std::string(object->GetStringValue());
     } else if (key == g_key_qaddr) {
@@ -2254,7 +2260,8 @@ ProcessGDBRemote::SetThreadStopInfo(StructuredData::Dictionary *thread_dict) {
                            reason, description, exc_type, exc_data,
                            thread_dispatch_qaddr, queue_vars_valid,
                            associated_with_dispatch_queue, dispatch_queue_t,
-                           queue_name, queue_kind, queue_serial_number);
+                           queue_name, queue_kind, queue_serial_number,
+                           exc_first_chance);
 }
 
 StateType ProcessGDBRemote::SetThreadStopInfo(StringExtractor &stop_packet) {
@@ -2288,6 +2295,7 @@ StateType ProcessGDBRemote::SetThreadStopInfo(StringExtractor &stop_packet) {
     std::string description;
     uint32_t exc_type = 0;
     std::vector<addr_t> exc_data;
+    bool exc_first_chance = false;
     addr_t thread_dispatch_qaddr = LLDB_INVALID_ADDRESS;
     bool queue_vars_valid =
         false; // says if locals below that start with "queue_" are valid
@@ -2302,6 +2310,9 @@ StateType ProcessGDBRemote::SetThreadStopInfo(StringExtractor &stop_packet) {
       if (key.compare("metype") == 0) {
         // exception type in big endian hex
         value.getAsInteger(16, exc_type);
+      } else if (key.compare("mefirst") == 0) {
+        // first-chance Windows structured exception flag
+        exc_first_chance = (value == "1");
       } else if (key.compare("medata") == 0) {
         // exception data in big endian hex
         uint64_t x;
@@ -2492,7 +2503,7 @@ StateType ProcessGDBRemote::SetThreadStopInfo(StringExtractor &stop_packet) {
         tid, expedited_register_map, signo, thread_name, reason, description,
         exc_type, exc_data, thread_dispatch_qaddr, queue_vars_valid,
         associated_with_dispatch_queue, dispatch_queue_t, queue_name,
-        queue_kind, queue_serial_number);
+        queue_kind, queue_serial_number, exc_first_chance);
 
     return eStateStopped;
   } break;

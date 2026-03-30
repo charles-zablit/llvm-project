@@ -844,6 +844,9 @@ GetJSONThreadsInfo(NativeProcessProtocol &process, bool abridged) {
             static_cast<int64_t>(tid_stop_info.details.exception.data[i]));
       }
       thread_obj.try_emplace("medata", std::move(medata_array));
+
+      if (tid_stop_info.details.exception.first_chance)
+        thread_obj.try_emplace("mefirst", true);
     }
     threads_array.push_back(std::move(thread_obj));
   }
@@ -1032,6 +1035,13 @@ GDBRemoteCommunicationServerLLGS::PrepareStopReplyPacketForThread(
       response.PutHex64(tid_stop_info.details.exception.data[i]);
       response.PutChar(';');
     }
+  }
+
+  // Emit the first-chance flag for Windows structured exceptions so the client
+  // can distinguish first-chance (informational) from second-chance (crash).
+  if (tid_stop_info.reason == eStopReasonException &&
+      tid_stop_info.details.exception.first_chance) {
+    response.PutCString("mefirst:1;");
   }
 
   // Include child process PID/TID for forks.
