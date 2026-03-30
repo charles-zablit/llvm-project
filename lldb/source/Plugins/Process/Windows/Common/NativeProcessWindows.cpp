@@ -11,6 +11,7 @@
 
 #include "NativeProcessWindows.h"
 #include "NativeThreadWindows.h"
+#include "lldb/Host/windows/ConnectionConPTYWindows.h"
 #include "lldb/Host/FileSystem.h"
 #include "lldb/Host/HostNativeProcessBase.h"
 #include "lldb/Host/HostProcess.h"
@@ -54,6 +55,19 @@ NativeProcessWindows::NativeProcessWindows(ProcessLaunchInfo &launch_info,
           delegate),
       ProcessDebugger(), m_arch(launch_info.GetArchitecture()) {
   ErrorAsOutParameter EOut(&E);
+
+  // Set up a ConPTY so that inferior stdio can be forwarded via $O packets.
+  // Errors here are non-fatal: we just won't have stdio forwarding.
+  m_pty = std::make_shared<PseudoConsole>();
+  if (auto pty_err = m_pty->OpenPseudoConsole()) {
+    Log *log = GetLog(WindowsLog::Process);
+    LLDB_LOG_ERROR(log, std::move(pty_err),
+                   "Failed to open ConPTY for stdio forwarding: {0}");
+    m_pty.reset();
+  } else {
+    launch_info.SetPTY(m_pty);
+  }
+
   DebugDelegateSP delegate_sp(new NativeDebugDelegate(*this));
   E = LaunchProcess(launch_info, delegate_sp).ToError();
   if (E)
@@ -432,6 +446,12 @@ NativeProcessWindows::GetLoadedLibraries() {
   for (auto &it : m_loaded_modules)
     result.push_back({it.first.GetPath(), it.second});
   return result;
+}
+
+std::unique_ptr<Connection> NativeProcessWindows::CreateStdioConnection() {
+  if (!m_pty || !m_pty->IsConnected())
+    return nullptr;
+  return std::make_unique<ConnectionConPTY>(m_pty);
 }
 
 void NativeProcessWindows::OnExitProcess(uint32_t exit_code) {

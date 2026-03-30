@@ -132,6 +132,8 @@ public:
 
   std::shared_ptr<PTY> TakePTY() { return std::move(m_pty); }
 
+  void SetPTY(std::shared_ptr<PTY> pty) { m_pty = std::move(pty); }
+
   /// Returns whether if lldb should read information from the PTY. This is
   /// always true on non Windows.
   bool ShouldUsePTY() const {

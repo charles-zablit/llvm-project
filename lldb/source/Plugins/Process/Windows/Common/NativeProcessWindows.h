@@ -10,6 +10,7 @@
 #define liblldb_NativeProcessWindows_h_
 
 #include "lldb/Host/common/NativeProcessProtocol.h"
+#include "lldb/Host/windows/PseudoConsole.h"
 #include "lldb/lldb-forward.h"
 
 #include "IDebugDelegate.h"
@@ -101,6 +102,8 @@ public:
 
   llvm::Expected<std::vector<WindowsLibraryInfo>> GetLoadedLibraries() override;
 
+  std::unique_ptr<Connection> CreateStdioConnection() override;
+
   // ProcessDebugger Overrides
   void OnExitProcess(uint32_t exit_code) override;
   void OnDebuggerConnected(lldb::addr_t image_base) override;
@@ -137,6 +140,7 @@ protected:
 private:
   ArchSpec m_arch;
   bool m_active_exception_first_chance = false;
+  std::shared_ptr<PseudoConsole> m_pty;
 
   NativeProcessWindows(ProcessLaunchInfo &launch_info, NativeDelegate &delegate,
                        llvm::Error &E);

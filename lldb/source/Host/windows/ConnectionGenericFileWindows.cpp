@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "lldb/Host/windows/ConnectionGenericFileWindows.h"
+#include "lldb/Utility/IOObject.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/Status.h"
@@ -260,6 +261,50 @@ std::string ConnectionGenericFile::GetURI() { return m_uri; }
 
 bool ConnectionGenericFile::InterruptRead() {
   return ::SetEvent(m_event_handles[kInterruptEvent]);
+}
+
+namespace {
+/// Thin IOObject adapter that exposes a Windows HANDLE to the main loop.
+/// Used by ConnectionGenericFile::GetReadObject() so that MainLoopWindows
+/// can register a read callback for pipe/file handles.
+class WindowsHandleIOObject : public IOObject {
+public:
+  explicit WindowsHandleIOObject(HANDLE handle)
+      : IOObject(eFDTypeFile), m_handle(handle) {}
+
+  WaitableHandle GetWaitableHandle() override { return m_handle; }
+
+  bool IsValid() const override { return m_handle != INVALID_HANDLE_VALUE; }
+
+  Status Read(void *buf, size_t &num_bytes) override {
+    DWORD bytes_read = 0;
+    if (!::ReadFile(m_handle, buf, static_cast<DWORD>(num_bytes), &bytes_read,
+                    nullptr))
+      return Status(::GetLastError(), eErrorTypeWin32);
+    num_bytes = bytes_read;
+    return Status();
+  }
+
+  Status Write(const void *buf, size_t &num_bytes) override {
+    DWORD bytes_written = 0;
+    if (!::WriteFile(m_handle, buf, static_cast<DWORD>(num_bytes),
+                     &bytes_written, nullptr))
+      return Status(::GetLastError(), eErrorTypeWin32);
+    num_bytes = bytes_written;
+    return Status();
+  }
+
+  Status Close() override { return Status(); } // Handle not owned here.
+
+private:
+  HANDLE m_handle;
+};
+} // namespace
+
+lldb::IOObjectSP ConnectionGenericFile::GetReadObject() {
+  if (!IsConnected())
+    return {};
+  return std::make_shared<WindowsHandleIOObject>(m_file);
 }
 
 void ConnectionGenericFile::IncrementFilePointer(DWORD amount) {

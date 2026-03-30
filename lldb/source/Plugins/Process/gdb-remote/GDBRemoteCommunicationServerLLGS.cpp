@@ -315,21 +315,29 @@ Status GDBRemoteCommunicationServerLLGS::LaunchProcess() {
              "gdb-remote commands",
              m_current_process->GetID());
 
-    // Setup stdout/stderr mapping from inferior to $O
-    auto terminal_fd = m_current_process->GetTerminalFileDescriptor();
-    if (terminal_fd >= 0) {
-      LLDB_LOGF(log,
-                "ProcessGDBRemoteCommunicationServerLLGS::%s setting "
-                "inferior STDIO fd to %d",
-                __FUNCTION__, terminal_fd);
-      Status status = SetSTDIOFileDescriptor(terminal_fd);
-      if (status.Fail())
-        return status;
+    // Setup stdout/stderr mapping from inferior to $O. On Windows, the process
+    // may expose a ConPTY connection instead of a POSIX fd.
+    if (auto stdio_conn = m_current_process->CreateStdioConnection()) {
+      LLDB_LOG(log, "pid = {0}: using native stdio connection for $O forwarding",
+               m_current_process->GetID());
+      m_stdio_communication.SetCloseOnEOF(false);
+      m_stdio_communication.SetConnection(std::move(stdio_conn));
     } else {
-      LLDB_LOGF(log,
-                "ProcessGDBRemoteCommunicationServerLLGS::%s ignoring "
-                "inferior STDIO since terminal fd reported as %d",
-                __FUNCTION__, terminal_fd);
+      auto terminal_fd = m_current_process->GetTerminalFileDescriptor();
+      if (terminal_fd >= 0) {
+        LLDB_LOGF(log,
+                  "ProcessGDBRemoteCommunicationServerLLGS::%s setting "
+                  "inferior STDIO fd to %d",
+                  __FUNCTION__, terminal_fd);
+        Status status = SetSTDIOFileDescriptor(terminal_fd);
+        if (status.Fail())
+          return status;
+      } else {
+        LLDB_LOGF(log,
+                  "ProcessGDBRemoteCommunicationServerLLGS::%s ignoring "
+                  "inferior STDIO since terminal fd reported as %d",
+                  __FUNCTION__, terminal_fd);
+      }
     }
   } else {
     LLDB_LOG(log,

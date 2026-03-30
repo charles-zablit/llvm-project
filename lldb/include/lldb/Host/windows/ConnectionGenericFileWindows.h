@@ -11,6 +11,7 @@
 
 #include "lldb/Host/windows/windows.h"
 #include "lldb/Utility/Connection.h"
+#include "lldb/Utility/IOObject.h"
 #include "lldb/lldb-types.h"
 
 namespace lldb_private {
@@ -40,6 +41,10 @@ public:
   std::string GetURI() override;
 
   bool InterruptRead() override;
+
+  /// Returns an IOObject wrapping the underlying file handle.
+  /// Used by MainLoopWindows to register a read callback.
+  lldb::IOObjectSP GetReadObject() override;
 
 protected:
   OVERLAPPED m_overlapped;

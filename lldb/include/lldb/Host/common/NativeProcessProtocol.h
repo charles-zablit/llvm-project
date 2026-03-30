@@ -19,6 +19,7 @@
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/TraceGDBRemotePackets.h"
 #include "lldb/Utility/UnimplementedError.h"
+#include "lldb/Utility/Connection.h"
 #include "lldb/lldb-private-forward.h"
 #include "lldb/lldb-types.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -236,6 +237,14 @@ public:
 
   // Access to inferior stdio
   virtual int GetTerminalFileDescriptor() { return m_terminal_fd; }
+
+  /// Create a Connection to the inferior's stdio, if available.
+  /// On platforms that use a ConPTY (Windows), this returns the native
+  /// connection instead of a POSIX file descriptor. Returns nullptr if
+  /// the process does not support this (fall back to GetTerminalFileDescriptor).
+  virtual std::unique_ptr<Connection> CreateStdioConnection() {
+    return nullptr;
+  }
 
   // Stop id interface
 
