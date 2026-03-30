@@ -241,6 +241,15 @@ public:
 
   uint32_t GetStopID() const;
 
+  /// Return true if the module list changed since the last stop reply, and
+  /// clear the flag. Called by GDBRemoteCommunicationServerLLGS to emit
+  /// the `library:` key in T packets.
+  bool GetAndClearModulesChanged() {
+    bool v = m_modules_changed;
+    m_modules_changed = false;
+    return v;
+  }
+
   // Callbacks for low-level process state changes
   class NativeDelegate {
   public:
@@ -470,14 +479,6 @@ protected:
 
   /// Mark that the module list has changed since the last stop reply.
   void SetModulesChanged() { m_modules_changed = true; }
-
-  /// Return true if the module list changed since the last stop reply, and
-  /// clear the flag.
-  bool GetAndClearModulesChanged() {
-    bool v = m_modules_changed;
-    m_modules_changed = false;
-    return v;
-  }
 
   // lldb_private::Host calls should be used to launch a process for debugging,
   // and then the process should be attached to. When attaching to a process

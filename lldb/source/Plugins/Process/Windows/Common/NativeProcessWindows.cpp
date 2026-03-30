@@ -421,7 +421,7 @@ NativeProcessWindows::GetFileLoadAddress(const llvm::StringRef &file_name,
       file_spec.GetPath().c_str(), GetID());
 }
 
-llvm::Expected<std::vector<NativeProcessProtocol::WindowsLibraryInfo>>
+llvm::Expected<std::vector<WindowsLibraryInfo>>
 NativeProcessWindows::GetLoadedLibraries() {
   Status error = CacheLoadedModules();
   if (error.Fail())
