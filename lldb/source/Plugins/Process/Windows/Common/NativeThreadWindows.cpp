@@ -90,6 +90,11 @@ Status NativeThreadWindows::DoResume(lldb::StateType resume_state) {
 
     } while (previous_suspend_count > 1);
     m_state = eStateRunning;
+    // Clear the stale stop info so that if this thread is later suspended by
+    // another thread's debug event, the old reason is not re-reported in the
+    // next stop reply packet (mirroring NativeThreadLinux::Resume behavior).
+    m_stop_info.reason = eStopReasonNone;
+    m_stop_description.clear();
   }
 
   return Status();
