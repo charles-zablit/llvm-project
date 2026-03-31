@@ -45,9 +45,14 @@ public:
   explicit PipeEvent(HANDLE handle)
       : IOEvent(CreateEventW(NULL, /*bManualReset=*/TRUE,
                              /*bInitialState=*/FALSE, NULL)),
-        m_handle(handle), m_ready(CreateEventW(NULL, /*bManualReset=*/TRUE,
-                                               /*bInitialState=*/FALSE, NULL)) {
-    assert(m_event && m_ready);
+        m_handle(handle),
+        m_ready(CreateEventW(NULL, /*bManualReset=*/TRUE,
+                             /*bInitialState=*/FALSE, NULL)),
+        m_io_event(CreateEventW(NULL, /*bManualReset=*/TRUE,
+                                /*bInitialState=*/FALSE, NULL)),
+        m_stop_event(CreateEventW(NULL, /*bManualReset=*/TRUE,
+                                  /*bInitialState=*/FALSE, NULL)) {
+    assert(m_event && m_ready && m_io_event && m_stop_event);
     m_monitor_thread = std::thread(&PipeEvent::Monitor, this);
   }
 
@@ -56,13 +61,19 @@ public:
       {
         std::lock_guard<std::mutex> guard(m_mutex);
         m_stopped = true;
+        // Signal both m_ready (to wake the bottom-of-loop wait) and
+        // m_stop_event (to interrupt any in-progress WaitForMultipleObjects
+        // inside Monitor). The monitor thread cancels its own pending IO so
+        // there is no race between CancelIoEx and a freshly issued ReadFile.
         SetEvent(m_ready);
-        CancelIoEx(m_handle, &m_ov);
+        SetEvent(m_stop_event);
       }
       m_monitor_thread.join();
     }
     CloseHandle(m_event);
     CloseHandle(m_ready);
+    CloseHandle(m_io_event);
+    CloseHandle(m_stop_event);
   }
 
   void WillPoll() override {
@@ -87,15 +98,22 @@ public:
   }
 
   /// Monitors the handle performing a zero byte read to determine when data is
-  /// avaiable.
+  /// available.
   void Monitor() {
-    // Wait until the MainLoop tells us to start.
+    // Wait until the MainLoop tells us to start (or we are destroyed).
     WaitForSingleObject(m_ready, INFINITE);
+    if (m_stopped)
+      return;
 
     do {
       char buf[1];
       DWORD bytes_read = 0;
       ZeroMemory(&m_ov, sizeof(m_ov));
+      // Use m_io_event so we can interrupt the wait via m_stop_event below
+      // instead of relying on CancelIoEx from the destructor (which races
+      // with a freshly issued ReadFile).
+      m_ov.hEvent = m_io_event;
+      ResetEvent(m_io_event);
       // Block on a 0-byte read; this will only resume when data is
       // available in the pipe. The pipe must be PIPE_WAIT or this thread
       // will spin.
@@ -104,8 +122,23 @@ public:
       DWORD bytes_available = 0;
       DWORD err = GetLastError();
       if (!success && err == ERROR_IO_PENDING) {
+        // Wait for either IO completion or a stop request. Using
+        // WaitForMultipleObjects (rather than GetOverlappedResult with
+        // bWait=TRUE) lets the destructor reliably interrupt us: it signals
+        // m_stop_event and we cancel our own pending IO from this thread,
+        // eliminating the race between CancelIoEx and a new ReadFile.
+        HANDLE h[2] = {m_io_event, m_stop_event};
+        DWORD r = WaitForMultipleObjects(2, h, /*bWaitAll=*/FALSE, INFINITE);
+        if (r != WAIT_OBJECT_0) {
+          // Stop requested. Cancel the pending IO from this thread so that
+          // there is no risk of the OVERLAPPED being freed while the kernel
+          // still holds a reference to it.
+          CancelIoEx(m_handle, &m_ov);
+          GetOverlappedResult(m_handle, &m_ov, &bytes_read, /*bWait=*/TRUE);
+          return;
+        }
         success = GetOverlappedResult(m_handle, &m_ov, &bytes_read,
-                                      /*bWait=*/TRUE);
+                                      /*bWait=*/FALSE);
         err = GetLastError();
       }
       if (success) {
@@ -149,6 +182,11 @@ public:
 private:
   HANDLE m_handle;
   HANDLE m_ready;
+  // Event set into m_ov.hEvent so WaitForMultipleObjects can wait on IO
+  // completion alongside m_stop_event.
+  HANDLE m_io_event;
+  // Signalled by the destructor to ask the monitor thread to exit cleanly.
+  HANDLE m_stop_event;
   OVERLAPPED m_ov;
   std::thread m_monitor_thread;
   std::atomic<bool> m_stopped = false;
