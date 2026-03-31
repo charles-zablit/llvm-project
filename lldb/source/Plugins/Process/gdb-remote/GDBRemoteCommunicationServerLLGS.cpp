@@ -1135,6 +1135,11 @@ void GDBRemoteCommunicationServerLLGS::HandleInferiorState_Exited(
 
   lldb::pid_t pid = process->GetID();
   m_mainloop.AddPendingCallback([this, pid](MainLoopBase &loop) {
+    // StopSTDIOForwarding() modifies the mainloop fd set; running it here
+    // (on the mainloop thread) avoids the race with MainLoopWindows's
+    // positional index into m_read_fds.
+    if (!m_non_stop)
+      StopSTDIOForwarding();
     auto find_it = m_debugged_processes.find(pid);
     assert(find_it != m_debugged_processes.end());
     bool vkilled = bool(find_it->second.flags & DebuggedProcess::Flag::vkilled);
@@ -1190,16 +1195,19 @@ void GDBRemoteCommunicationServerLLGS::ProcessStateChanged(
     SendProcessOutput();
     // Then stop the forwarding, so that any late output (see llvm.org/pr25652)
     // does not interfere with our protocol.
+    // StopSTDIOForwarding() modifies the mainloop's fd set, so it must run on
+    // the mainloop thread. Defer via AddPendingCallback to avoid a race on
+    // Windows (MainLoopWindows uses positional indexing into m_read_fds).
     if (!m_non_stop)
-      StopSTDIOForwarding();
+      m_mainloop.AddPendingCallback(
+          [this](MainLoopBase &) { StopSTDIOForwarding(); });
     HandleInferiorState_Stopped(process);
     break;
 
   case StateType::eStateExited:
-    // Same as above
+    // Same as above — StopSTDIOForwarding() is deferred into
+    // HandleInferiorState_Exited's pending callback (mainloop thread).
     SendProcessOutput();
-    if (!m_non_stop)
-      StopSTDIOForwarding();
     HandleInferiorState_Exited(process);
     break;
 
