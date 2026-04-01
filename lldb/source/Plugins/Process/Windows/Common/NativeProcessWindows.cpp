@@ -634,10 +634,13 @@ NativeProcessWindows::OnDebugException(bool first_chance,
       SetState(eStateStopped, true);
     }
 
-    // Stop in the debugger regardless of first vs second chance. When the user
-    // resumes, Resume() will forward first-chance exceptions to the application
-    // (SendToApplication) and mask second-chance ones (MaskException).
-    result = ExceptionResult::BreakInDebugger;
+    // For first-chance exceptions, give the application a chance to handle
+    // them before breaking into the debugger. Second-chance exceptions mean
+    // the application did not handle them, so we break in the debugger.
+    if (first_chance)
+      result = ExceptionResult::SendToApplication;
+    else
+      result = ExceptionResult::BreakInDebugger;
   }
 
   return result;
