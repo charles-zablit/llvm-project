@@ -1031,6 +1031,10 @@ def _executeShCmd(cmd, shenv, results, timeoutHelper):
                 proc_not_fail_if_crash.append(False)
             # Let the helper know about this process
             timeoutHelper.addProcess(procs[-1])
+            # On Windows, assign the process to a kill-on-close job so that
+            # it and all its descendants are terminated if this worker is
+            # forcibly killed (e.g. via pool.terminate() on Ctrl+C).
+            lit.util.assignToKillOnCloseJob(procs[-1])
         except OSError as e:
             raise InternalShellError(
                 j, "Could not create process ({}) due to {}".format(executable, e)

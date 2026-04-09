@@ -437,6 +437,72 @@ class WindowsProcessHelper(ProcessHelper):
 
     def __init__(self):
         super(WindowsProcessHelper, self).__init__()
+        # Keep job object handles alive for the lifetime of this helper.
+        # When this process exits (or is forcibly killed), the OS closes all
+        # handles, which triggers JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE and
+        # kills the dotest subprocess and all its descendants.
+        self._job_handles = []
+
+    @staticmethod
+    def _create_kill_on_close_job():
+        """Create a Windows Job Object that kills all members when its last
+        handle is closed.  Returns the raw HANDLE value, or None on failure."""
+        import ctypes
+        import ctypes.wintypes
+
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+        JobObjectExtendedLimitInformation = 9
+
+        class _BASIC(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", ctypes.wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", ctypes.wintypes.DWORD),
+                ("Affinity", ctypes.c_void_p),
+                ("PriorityClass", ctypes.wintypes.DWORD),
+                ("SchedulingClass", ctypes.wintypes.DWORD),
+            ]
+
+        class _IO(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount", ctypes.c_uint64),
+                ("WriteTransferCount", ctypes.c_uint64),
+                ("OtherTransferCount", ctypes.c_uint64),
+            ]
+
+        class _EXTLIMIT(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", _BASIC),
+                ("IoInfo", _IO),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        job = kernel32.CreateJobObjectW(None, None)
+        if not job:
+            return None
+
+        info = _EXTLIMIT()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        ):
+            kernel32.CloseHandle(job)
+            return None
+
+        return job
 
     def create_piped_process(self, command, new_process_group=True):
         if new_process_group:
@@ -445,7 +511,7 @@ class WindowsProcessHelper(ProcessHelper):
         else:
             creation_flags = 0
 
-        return subprocess.Popen(
+        proc = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -453,6 +519,27 @@ class WindowsProcessHelper(ProcessHelper):
             universal_newlines=True,  # Elicits automatic byte -> string decoding in Py3
             creationflags=creation_flags,
         )
+
+        # Assign the child process to a kill-on-close job object.  When this
+        # worker process exits for any reason (including a forcible kill from
+        # pool.terminate()), the OS closes all our handles.  That causes
+        # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE to fire, terminating the dotest
+        # subprocess and all of its descendants (lldb, lldb-server, etc.).
+        try:
+            import ctypes
+
+            job = self._create_kill_on_close_job()
+            if job:
+                # subprocess.Popen stores the raw Windows HANDLE in _handle.
+                kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+                if kernel32.AssignProcessToJobObject(job, proc._handle):
+                    self._job_handles.append(job)
+                else:
+                    kernel32.CloseHandle(job)
+        except Exception:
+            pass  # Non-fatal: fall back to best-effort cleanup
+
+        return proc
 
     def was_hard_terminate(self, returncode):
         return returncode != 0

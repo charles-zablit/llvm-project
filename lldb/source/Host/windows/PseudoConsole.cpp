@@ -88,8 +88,6 @@ llvm::Error PseudoConsole::CreateOverlappedPipePair(HANDLE &out_read,
         std::error_code(GetLastError(), std::system_category()));
   }
 
-  DWORD mode = PIPE_NOWAIT;
-  SetNamedPipeHandleState(out_read, &mode, NULL, NULL);
   return llvm::Error::success();
 }
 
@@ -160,6 +158,13 @@ llvm::Error PseudoConsole::OpenPseudoConsole() {
                    "failed to finalize ConPTY's setup: {0}");
   }
 
+  // PIPE_NOWAIT must be set after DrainInitSequences. With PIPE_NOWAIT,
+  // overlapped ReadFile completes immediately with ERROR_NO_DATA (0 bytes)
+  // instead of returning ERROR_IO_PENDING, which breaks the blocking reads the
+  // drain logic depends on.
+  DWORD mode = PIPE_NOWAIT;
+  SetNamedPipeHandleState(m_conpty_output, &mode, NULL, NULL);
+
   return llvm::Error::success();
 }
 
@@ -228,6 +233,9 @@ llvm::Error PseudoConsole::OpenAnonymousPipes() {
   m_pipe_child_stdin = hStdinRead;
   m_pipe_child_stdout = hStdoutWrite;
   m_mode = Mode::Pipe;
+
+  DWORD mode = PIPE_NOWAIT;
+  SetNamedPipeHandleState(m_conpty_output, &mode, NULL, NULL);
   return llvm::Error::success();
 }
 
@@ -277,9 +285,26 @@ llvm::Error PseudoConsole::DrainInitSequences() {
 
   WaitForSingleObject(pi.hProcess, INFINITE);
 
-  if (GetOverlappedResult(m_conpty_output, &ov, &read, FALSE) && read > 0) {
-    ResetEvent(ov.hEvent);
-    ReadFile(m_conpty_output, buf, sizeof(buf), &read, &ov);
+  // Wait for the pending read to actually complete (bWait=TRUE). Without this,
+  // GetOverlappedResult returns immediately if ConPTY hasn't written yet, and
+  // CancelIo would discard the entire init sequence.
+  //
+  // Console API calls (e.g. cls -> FillConsoleOutputCharacter) are processed
+  // synchronously by the ConPTY console host: the VT sequences are written to
+  // the pipe before the API call returns to the child. So once the process has
+  // exited, all init data is already in the pipe and PeekNamedPipe reliably
+  // tells us when we've drained it.
+  if (GetOverlappedResult(m_conpty_output, &ov, &read, /*bWait=*/TRUE) &&
+      read > 0) {
+    DWORD bytesAvail = 0;
+    while (PeekNamedPipe(m_conpty_output, NULL, 0, NULL, &bytesAvail, NULL) &&
+           bytesAvail > 0) {
+      ResetEvent(ov.hEvent);
+      ReadFile(m_conpty_output, buf, sizeof(buf), &read, &ov);
+      if (!GetOverlappedResult(m_conpty_output, &ov, &read, /*bWait=*/TRUE) ||
+          read == 0)
+        break;
+    }
   }
 
   CancelIo(m_conpty_output);

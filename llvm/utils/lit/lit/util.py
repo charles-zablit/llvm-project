@@ -407,6 +407,107 @@ def killProcessAndChildrenIsSupported():
         )
 
 
+# Module-level cache for the Windows kill-on-close job object handle.
+# None  → not yet attempted
+# 0     → attempted but failed (do not retry)
+# other → valid HANDLE
+_windows_kill_on_close_job = None
+
+
+def _get_windows_kill_on_close_job():
+    """Return the module-level Windows Job Object handle, creating it on first
+    call.  Returns 0 (falsy) if creation failed or the platform is not Windows.
+
+    The job has JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE set, so when this process
+    exits for any reason (including a forcible TerminateProcess call), the OS
+    closes the last handle to the job and Windows automatically kills every
+    process assigned to it.
+    """
+    global _windows_kill_on_close_job
+    if _windows_kill_on_close_job is not None:
+        return _windows_kill_on_close_job
+
+    import ctypes
+    import ctypes.wintypes
+
+    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+    JobObjectExtendedLimitInformation = 9
+
+    class _BASIC(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_int64),
+            ("PerJobUserTimeLimit", ctypes.c_int64),
+            ("LimitFlags", ctypes.wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", ctypes.wintypes.DWORD),
+            ("Affinity", ctypes.c_void_p),
+            ("PriorityClass", ctypes.wintypes.DWORD),
+            ("SchedulingClass", ctypes.wintypes.DWORD),
+        ]
+
+    class _IO(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_uint64),
+            ("WriteOperationCount", ctypes.c_uint64),
+            ("OtherOperationCount", ctypes.c_uint64),
+            ("ReadTransferCount", ctypes.c_uint64),
+            ("WriteTransferCount", ctypes.c_uint64),
+            ("OtherTransferCount", ctypes.c_uint64),
+        ]
+
+    class _EXTLIMIT(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", _BASIC),
+            ("IoInfo", _IO),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    job = kernel32.CreateJobObjectW(None, None)
+    if job:
+        info = _EXTLIMIT()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if not kernel32.SetInformationJobObject(
+            job,
+            JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        ):
+            kernel32.CloseHandle(job)
+            job = 0
+
+    _windows_kill_on_close_job = job
+    return job
+
+
+def assignToKillOnCloseJob(proc):
+    """On Windows, assign *proc* (a ``subprocess.Popen``) to a per-worker Job
+    Object with ``JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE``.
+
+    When this worker process exits for any reason — including a forcible kill
+    from ``multiprocessing.Pool.terminate()`` — the OS closes all handles it
+    owns, which triggers the kill-on-close flag and terminates *proc* together
+    with all of its descendants (grandchild test executables, servers, etc.).
+
+    This is a no-op on non-Windows platforms.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        job = _get_windows_kill_on_close_job()
+        if job:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.AssignProcessToJobObject(job, proc._handle)
+    except Exception:
+        pass  # Non-fatal: fall back to best-effort cleanup
+
+
 def killProcessAndChildren(pid):
     """This function kills a process with ``pid`` and all its running children
     (recursively). It is currently implemented using the psutil module on some
