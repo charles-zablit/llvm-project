@@ -8,6 +8,26 @@
 
 #include "ProcessWindows.h"
 
+static FILE *GetConPTYTraceFile() {
+  static FILE *f = [] {
+    const char *path = ::getenv("LLDB_CONPTY_TRACE");
+    if (!path)
+      return static_cast<FILE *>(nullptr);
+    FILE *fp = ::fopen(path, "a");
+    if (fp)
+      ::setbuf(fp, nullptr);
+    return fp;
+  }();
+  return f;
+}
+
+#define CONPTY_TRACE(fmt, ...)                                                  \
+  do {                                                                         \
+    if (FILE *f_ = GetConPTYTraceFile())                                       \
+      ::fprintf(f_, "[%u] " fmt "\n", (unsigned)::GetCurrentThreadId(),        \
+                __VA_ARGS__);                                                   \
+  } while (0)
+
 // Windows includes
 #include "lldb/Host/windows/windows.h"
 #include <psapi.h>
@@ -653,11 +673,16 @@ void ProcessWindows::OnExitProcess(uint32_t exit_code) {
   // No need to acquire the lock since m_session_data isn't accessed.
   Log *log = GetLog(WindowsLog::Process);
   LLDB_LOG(log, "Process {0} exited with code {1}", GetID(), exit_code);
+  CONPTY_TRACE("OnExitProcess: enter, exit_code=%u", exit_code);
 
   if (m_pty) {
+    CONPTY_TRACE("OnExitProcess: SetStopping(true)%s", "");
     m_pty->SetStopping(true);
+    CONPTY_TRACE("OnExitProcess: InterruptRead%s", "");
     m_stdio_communication.InterruptRead();
+    CONPTY_TRACE("OnExitProcess: Close%s", "");
     m_pty->Close();
+    CONPTY_TRACE("OnExitProcess: Close done%s", "");
   }
 
   TargetSP target = CalculateTarget();
@@ -746,21 +771,45 @@ ProcessWindows::OnDebugException(bool first_chance,
   // the Debugger event thread before the preceding eBroadcastBitSTDOUT
   // events.
   auto drain_stdout = [this] {
+    CONPTY_TRACE("drain_stdout: enter, read_thread_running=%d",
+                 (int)m_stdio_communication.ReadThreadIsRunning());
     if (!m_stdio_communication.ReadThreadIsRunning())
       return;
+    CONPTY_TRACE("drain_stdout: SynchronizeWithReadThread begin%s", "");
     m_stdio_communication.SynchronizeWithReadThread();
+    CONPTY_TRACE("drain_stdout: SynchronizeWithReadThread done%s", "");
     if (!m_pty || m_pty->GetMode() != PseudoConsole::Mode::ConPTY)
       return;
 
+    // ConPTY writes process output to the pipe asynchronously — scroll
+    // processing and line rewrapping can delay the write well after the
+    // inferior's WriteFile call returns.  PeekNamedPipe is safe to call
+    // concurrently with the read thread's overlapped ReadFile — it is a
+    // non-destructive peek.  Poll until the pipe has been quiescent for
+    // three consecutive 1 ms checks, re-syncing whenever new data appears,
+    // so all output is in m_stdout_data before we broadcast the stopped
+    // state.  Bail out if the read thread exits or after 150 iterations
+    // (~150 ms) to avoid hanging indefinitely.
     HANDLE pipe = m_pty->GetSTDOUTHandle();
     for (int consec_empty = 0; consec_empty < 3;) {
-      if (!m_stdio_communication.ReadThreadIsRunning())
+      if (!m_stdio_communication.ReadThreadIsRunning()) {
+        CONPTY_TRACE("drain_stdout: read thread exited at iter %d", iters);
         break;
+      }
       DWORD avail = 0;
       // PeekNamedPipe is thread safe.
       if (!::PeekNamedPipe(pipe, nullptr, 0, nullptr, &avail, nullptr))
         break;
+      }
+      DWORD avail = 0;
+      if (!::PeekNamedPipe(pipe, nullptr, 0, nullptr, &avail, nullptr)) {
+        CONPTY_TRACE("drain_stdout: PeekNamedPipe failed at iter %d, err=%u",
+                     iters, (unsigned)::GetLastError());
+        break;
+      }
       if (avail > 0) {
+        CONPTY_TRACE("drain_stdout: iter %d, avail=%u, syncing",
+                     iters, (unsigned)avail);
         consec_empty = 0;
         m_stdio_communication.SynchronizeWithReadThread();
       } else {
@@ -769,6 +818,7 @@ ProcessWindows::OnDebugException(bool first_chance,
           ::SleepEx(1, FALSE);
       }
     }
+    CONPTY_TRACE("drain_stdout: exit%s", "");
   };
 
   if (!first_chance) {

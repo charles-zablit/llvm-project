@@ -10,10 +10,31 @@
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/Timeout.h"
 
+#include <cstdio>
 #include <cstring>
 
 using namespace lldb;
 using namespace lldb_private;
+
+static FILE *GetTraceFile() {
+  static FILE *f = [] {
+    const char *path = ::getenv("LLDB_CONPTY_TRACE");
+    if (!path)
+      return static_cast<FILE *>(nullptr);
+    FILE *fp = ::fopen(path, "w");
+    if (fp)
+      ::setbuf(fp, nullptr);
+    return fp;
+  }();
+  return f;
+}
+
+#define CONPTY_TRACE(fmt, ...)                                                  \
+  do {                                                                         \
+    if (FILE *f_ = GetTraceFile())                                             \
+      ::fprintf(f_, "[%u] " fmt "\n", (unsigned)::GetCurrentThreadId(),        \
+                __VA_ARGS__);                                                   \
+  } while (0)
 
 /// Remove ConPTY management sequences from a buffer in-place.
 ///
@@ -117,14 +138,25 @@ size_t ConnectionConPTY::Read(void *dst, size_t dst_len,
                               const Timeout<std::micro> &timeout,
                               lldb::ConnectionStatus &status,
                               Status *error_ptr) {
+  CONPTY_TRACE("Read: acquiring mutex, stopping=%d",
+               (int)m_pty->IsStopping());
   std::unique_lock<std::mutex> guard(m_pty->GetMutex());
+  CONPTY_TRACE("Read: mutex acquired, stopping=%d",
+               (int)m_pty->IsStopping());
   if (m_pty->IsStopping()) {
+    CONPTY_TRACE("Read: waiting on CV (stopping)%s", "");
     m_pty->GetCV().wait(guard, [this] { return !m_pty->IsStopping(); });
+    CONPTY_TRACE("Read: CV signalled, stopping=%d",
+                 (int)m_pty->IsStopping());
   }
 
+  CONPTY_TRACE("Read: calling ConnectionGenericFile::Read (dst_len=%zu)",
+               dst_len);
   char *out = static_cast<char *>(dst);
   size_t bytes_read =
       ConnectionGenericFile::Read(out, dst_len, timeout, status, error_ptr);
+  CONPTY_TRACE("Read: ConnectionGenericFile::Read returned %zu bytes, status=%d",
+               bytes_read, (int)status);
 
   if (bytes_read > 0) {
     StripConPTYSequences(out, bytes_read, !m_conpty_sequences_stripped);
