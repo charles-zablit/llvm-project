@@ -241,7 +241,7 @@ static llvm::Expected<int> LaunchRunInTerminalTarget(llvm::opt::Arg &target_arg,
       /*lpCommandLine=*/wcommand_line_or_err->data(),
       /*lpProcessAttributes=*/NULL, /*lpThreadAttributes=*/NULL,
       /*bInheritHandles=*/!inherited_handles.empty(),
-      /*dwCreationFlags=*/CREATE_SUSPENDED, /*lpEnvironment=*/NULL,
+      /*dwCreationFlags=*/CREATE_SUSPENDED | EXTENDED_STARTUPINFO_PRESENT, /*lpEnvironment=*/NULL,
       /*lpCurrentDirectory=*/NULL,
       /*lpStartupInfo=*/reinterpret_cast<STARTUPINFOW *>(&startupinfoex),
       /*lpProcessInformation=*/&pi);
