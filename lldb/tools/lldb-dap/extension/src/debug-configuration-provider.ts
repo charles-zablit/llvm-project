@@ -201,6 +201,29 @@ export class LLDBDapConfigurationProvider
           return undefined;
         }
 
+        if (process.platform === "win32") {
+          try {
+            await exec(executable.command, ["--check-python"]);
+          } catch (e: any) {
+            const stderr: string = e.stderr ?? "";
+            if (stderr.length > 0) {
+              vscode.window
+                .showErrorMessage(
+                  `Python is not installed correctly. Please install it to use lldb-dap.\n${stderr}`,
+                  "Open Documentation",
+                )
+                .then((action) => {
+                  if (action === "Open Documentation") {
+                    vscode.env.openExternal(
+                      vscode.Uri.parse("https://lldb.llvm.org/use/python.html"),
+                    );
+                  }
+                });
+              return undefined;
+            }
+          }
+        }
+
         // Server mode needs to be handled here since DebugAdapterDescriptorFactory
         // will show an unhelpful error if it returns undefined. We'd rather show a
         // nicer error message here and allow stopping the debug session gracefully.
