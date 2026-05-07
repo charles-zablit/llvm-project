@@ -110,7 +110,8 @@ public:
 };
 
 CPPLanguageRuntime::CPPLanguageRuntime(Process *process)
-    : LanguageRuntime(process), m_itanium_runtime(process) {
+    : LanguageRuntime(process), m_itanium_runtime(process),
+      m_microsoft_runtime(process) {
   if (process) {
     process->GetTarget().GetFrameRecognizerManager().AddRecognizer(
         StackFrameRecognizerSP(new LibCXXFrameRecognizer()), {},
@@ -524,7 +525,11 @@ bool CPPLanguageRuntime::GetDynamicTypeAndAddress(
   if (!CouldHaveDynamicValue(in_value))
     return false;
 
-  return m_itanium_runtime.GetDynamicTypeAndAddress(
+  if (m_itanium_runtime.GetDynamicTypeAndAddress(
+          in_value, use_dynamic, class_type_or_name, dynamic_address,
+          value_type))
+    return true;
+  return m_microsoft_runtime.GetDynamicTypeAndAddress(
       in_value, use_dynamic, class_type_or_name, dynamic_address, value_type);
 }
 
@@ -588,7 +593,12 @@ void CPPLanguageRuntime::Terminate() {
 
 llvm::Expected<LanguageRuntime::VTableInfo>
 CPPLanguageRuntime::GetVTableInfo(ValueObject &in_value, bool check_type) {
-  return m_itanium_runtime.GetVTableInfo(in_value, check_type);
+  llvm::Expected<LanguageRuntime::VTableInfo> info_or_err =
+      m_itanium_runtime.GetVTableInfo(in_value, check_type);
+  if (info_or_err)
+    return info_or_err;
+  llvm::consumeError(info_or_err.takeError());
+  return m_microsoft_runtime.GetVTableInfo(in_value, check_type);
 }
 
 BreakpointResolverSP

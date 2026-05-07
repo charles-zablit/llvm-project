@@ -14,6 +14,7 @@
 #include "llvm/ADT/StringMap.h"
 
 #include "ItaniumABIRuntime.h"
+#include "MicrosoftABIRuntime.h"
 #include "lldb/Core/PluginInterface.h"
 #include "lldb/Target/LanguageRuntime.h"
 #include "lldb/lldb-private.h"
@@ -144,6 +145,7 @@ private:
 
   lldb::BreakpointSP m_cxx_exception_bp_sp;
   ItaniumABIRuntime m_itanium_runtime;
+  MicrosoftABIRuntime m_microsoft_runtime;
 };
 
 } // namespace lldb_private
