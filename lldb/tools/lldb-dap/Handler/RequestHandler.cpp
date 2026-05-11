@@ -139,18 +139,20 @@ RunInTerminal(DAP &dap, const protocol::LaunchRequestArguments &arguments) {
   std::future<lldb::SBError> did_attach_message_success =
       comm_channel.NotifyDidAttach();
 
-// We just attached to the runInTerminal launcher, which was waiting to be
-// attached. We now resume it, so it can receive the didAttach notification
-// and then perform the exec. Upon continuing, the debugger will stop the
-// process right in the middle of the exec. To the user, what we are doing is
-// transparent, as they will only be able to see the process since the exec,
-// completely unaware of the preparatory work.
-//
-// On Windows, the debuggee itself is waiting to be attached to. There is no
-// need to continue.
-#ifndef _WIN32
+  // We just attached to the runInTerminal launcher, which was waiting to be
+  // attached. We now resume it, so it can receive the didAttach notification
+  // and then perform the exec. Upon continuing, the debugger will stop the
+  // process right in the middle of the exec. To the user, what we are doing is
+  // transparent, as they will only be able to see the process since the exec,
+  // completely unaware of the preparatory work.
+  //
+  // On Windows the launcher launches the debuggee with CREATE_SUSPENDED and
+  // we attach via DebugActiveProcess. After resuming the main thread, ntdll's
+  // loader fires an extra "initial breakpoint" before reaching user code.
+  // Continuing here while still in synchronous mode steps the process past
+  // both the attach break-in and the loader breakpoint without exposing
+  // either to the client.
   dap.target.GetProcess().Continue();
-#endif
 
   // Return the debugger to its prior async state.
   scope_sync_mode.reset();
