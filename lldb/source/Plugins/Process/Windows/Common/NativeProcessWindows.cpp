@@ -564,7 +564,24 @@ NativeProcessWindows::OnDebugException(bool first_chance,
       return ExceptionResult::BreakInDebugger;
     }
 
-    [[fallthrough]];
+    // Any remaining STATUS_BREAKPOINT is a breakpoint instruction in the
+    // program's own code (e.g. `int3`, `__debugbreak()`, or
+    // `__builtin_debugtrap()`) that lldb did not plant itself. Stop the
+    // debugger and let the user decide what to do. Crucially we must return
+    // MaskException, not SendToApplication, because on Windows an unhandled
+    // STATUS_BREAKPOINT is fatal to the process — the subsequent user
+    // `continue` would have nothing to resume.
+    {
+      std::string desc =
+          formatv("Exception {0} encountered at address {1}",
+                  llvm::format_hex(record.GetExceptionCode(), 8),
+                  llvm::format_hex(record.GetExceptionAddress(), 8))
+              .str();
+      StopThread(record.GetThreadID(), StopReason::eStopReasonException,
+                 std::move(desc));
+      SetState(eStateStopped, true);
+    }
+    return ExceptionResult::MaskException;
   default:
     LLDB_LOG(log,
              "Debugger thread reported exception {0:x} at address {1:x} "
