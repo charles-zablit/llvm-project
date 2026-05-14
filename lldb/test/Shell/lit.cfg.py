@@ -54,6 +54,10 @@ llvm_config.with_system_environment(
         "TEMP",
         "TMP",
         "XDG_CACHE_HOME",
+        # Let users choose which process plugin lldb uses on Windows
+        # (see ProcessWindows::Initialize in the Windows Common plugin).
+        "LLDB_USE_LLDB_SERVER",
+        "LLDB_USE_PROCESS_WINDOWS",
     ]
 )
 
