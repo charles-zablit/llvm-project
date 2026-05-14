@@ -231,8 +231,19 @@ void ProcessLaunchInfo::SetDetachOnError(bool enable) {
 llvm::Error ProcessLaunchInfo::SetUpPtyRedirection() {
   Log *log = GetLog(LLDBLog::Process);
 
+#ifdef _WIN32
+  // Windows PseudoConsole is single-shot: OpenPseudoConsole asserts when
+  // m_mode != Mode::None. A ProcessLaunchInfo reused across launches
+  // (e.g. CommandObjectProcessLaunch's member, whose
+  // OptionParsingStarting calls Clear() but doesn't recreate the PTY)
+  // would otherwise carry a spent PseudoConsole into the next launch.
+  // Always start with a fresh one. Anything that needed the previous
+  // PTY (e.g. ProcessWindows) has captured it via TakePTY() by now.
+  m_pty = std::make_shared<PTY>();
+#else
   if (!m_pty)
     m_pty = std::make_shared<PTY>();
+#endif
 
   bool stdin_free = GetFileActionForFD(STDIN_FILENO) == nullptr;
   bool stdout_free = GetFileActionForFD(STDOUT_FILENO) == nullptr;
@@ -268,8 +279,10 @@ llvm::Error ProcessLaunchInfo::SetUpPtyRedirection() {
 
 #ifdef _WIN32
 llvm::Error ProcessLaunchInfo::SetUpPipeRedirection() {
-  if (!m_pty)
-    m_pty = std::make_shared<PTY>();
+  // PseudoConsole is single-shot (OpenAnonymousPipes asserts when
+  // m_mode != Mode::None), so we always need a fresh instance. See
+  // SetUpPtyRedirection for the surrounding rationale.
+  m_pty = std::make_shared<PTY>();
   return m_pty->OpenAnonymousPipes();
 }
 #endif
