@@ -5537,6 +5537,13 @@ llvm::Error ProcessGDBRemote::LoadModules() {
       if (obj->GetType() != ObjectFile::Type::eTypeExecutable)
         return IterationAction::Continue;
 
+      // Only re-set the executable if it actually changed. SetExecutableModule
+      // calls ClearModules(false), which empties target.GetImages() entirely;
+      // doing that on every refresh wipes out the modules (and the resolved
+      // breakpoint sites attached to them) we just walked through above.
+      if (target.GetExecutableModulePointer() == module_sp.get())
+        return IterationAction::Stop;
+
       lldb::ModuleSP module_copy_sp = module_sp;
       target.SetExecutableModule(module_copy_sp, eLoadDependentsNo);
       return IterationAction::Stop;
