@@ -84,6 +84,14 @@ public:
   NewSubprocess(NativeProcessProtocol *parent_process,
                 std::unique_ptr<NativeProcessProtocol> child_process) override;
 
+  /// Forward a chunk of inferior stdout/stderr produced by the platform's
+  /// own reader (Windows uses this; other platforms forward via the main
+  /// loop read handler set up in \ref StartSTDIOForwarding). The data is
+  /// wrapped in an `O` notification and dispatched to the client on the
+  /// main loop thread so it serialises against ordinary packet sends.
+  void NewProcessOutput(NativeProcessProtocol *process,
+                        llvm::StringRef data) override;
+
   Status InitializeConnection(std::unique_ptr<Connection> connection);
 
   GDBRemoteCommunication::PacketResult

@@ -19,9 +19,11 @@
 #include "lldb/Host/windows/AutoHandle.h"
 #include "lldb/Host/windows/HostThreadWindows.h"
 #include "lldb/Host/windows/ProcessLauncherWindows.h"
+#include "lldb/Host/windows/PseudoConsole.h"
 #include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Utility/State.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/Error.h"
@@ -60,6 +62,30 @@ NativeProcessWindows::NativeProcessWindows(ProcessLaunchInfo &launch_info,
     return;
 
   SetID(GetDebuggedProcessId());
+
+  // Take ownership of the PseudoConsole after launch: the launcher reads
+  // the child-side handles off launch_info, so they must still be in
+  // place across the LaunchProcess call. Once the child is spawned, we
+  // need the parent-side STDOUT HANDLE to keep reading after launch_info
+  // is cleared.
+  m_pty = launch_info.TakePTY();
+  StartStdioReaderThread();
+}
+
+NativeProcessWindows::~NativeProcessWindows() {
+  if (m_stdio_reader_thread.joinable()) {
+    // Unblock the reader: signal the stop event and cancel any pending
+    // overlapped ReadFile on the STDOUT HANDLE.
+    if (m_stdio_stop_event)
+      ::SetEvent(m_stdio_stop_event);
+    if (m_pty && m_pty->GetSTDOUTHandle() != INVALID_HANDLE_VALUE)
+      ::CancelIoEx(m_pty->GetSTDOUTHandle(), nullptr);
+    m_stdio_reader_thread.join();
+  }
+  if (m_stdio_stop_event) {
+    ::CloseHandle(m_stdio_stop_event);
+    m_stdio_stop_event = nullptr;
+  }
 }
 
 NativeProcessWindows::NativeProcessWindows(lldb::pid_t pid, int terminal_fd,
@@ -705,4 +731,98 @@ NativeProcessWindows::Manager::Attach(
     return std::move(E);
   return std::move(process_up);
 }
+
+void NativeProcessWindows::StartStdioReaderThread() {
+  if (!m_pty || m_pty->GetMode() != PseudoConsole::Mode::Pipe)
+    return;
+  HANDLE stdout_handle = m_pty->GetSTDOUTHandle();
+  if (stdout_handle == INVALID_HANDLE_VALUE || stdout_handle == nullptr)
+    return;
+
+  // Manual-reset stop event; SetEvent from the destructor unblocks
+  // WaitForMultipleObjects in the reader loop.
+  m_stdio_stop_event = ::CreateEventW(nullptr, /*bManualReset=*/TRUE,
+                                      /*bInitialState=*/FALSE, nullptr);
+  if (!m_stdio_stop_event)
+    return;
+
+  m_stdio_reader_thread =
+      std::thread(&NativeProcessWindows::StdioReaderThreadLoop, this);
+}
+
+void NativeProcessWindows::StdioReaderThreadLoop() {
+  llvm::set_thread_name("lldb.nproc.stdio");
+
+  Log *log = GetLog(WindowsLog::Process);
+  HANDLE stdout_handle = m_pty->GetSTDOUTHandle();
+
+  // The PseudoConsole in Pipe mode creates the parent-side STDOUT pipe
+  // with FILE_FLAG_OVERLAPPED, so ReadFile must be async. Use a manual-
+  // reset event for the overlapped hEvent so WaitForMultipleObjects and
+  // GetOverlappedResult agree on the signalled state.
+  HANDLE read_event = ::CreateEventW(nullptr, /*bManualReset=*/TRUE,
+                                     /*bInitialState=*/FALSE, nullptr);
+  if (!read_event) {
+    LLDB_LOG(log, "Failed to create overlapped event for stdio reader");
+    return;
+  }
+
+  HANDLE wait_handles[2] = {read_event, m_stdio_stop_event};
+  std::array<char, 1024> buffer;
+
+  while (true) {
+    OVERLAPPED ov{};
+    ov.hEvent = read_event;
+    ::ResetEvent(read_event);
+
+    DWORD bytes_read = 0;
+    BOOL ok =
+        ::ReadFile(stdout_handle, buffer.data(),
+                   static_cast<DWORD>(buffer.size()), &bytes_read, &ov);
+    DWORD err = ::GetLastError();
+
+    if (!ok && err != ERROR_IO_PENDING) {
+      // Pipe closed by the child or otherwise broken → EOF.
+      if (err == ERROR_BROKEN_PIPE || err == ERROR_HANDLE_EOF)
+        break;
+      LLDB_LOG(log, "stdio reader: ReadFile failed with error {0}", err);
+      break;
+    }
+
+    if (!ok) {
+      DWORD wait = ::WaitForMultipleObjects(2, wait_handles, /*bWaitAll=*/FALSE,
+                                            INFINITE);
+      if (wait == WAIT_OBJECT_0 + 1) {
+        // Destructor signalled shutdown; cancel and exit.
+        ::CancelIoEx(stdout_handle, &ov);
+        ::GetOverlappedResult(stdout_handle, &ov, &bytes_read, /*bWait=*/TRUE);
+        break;
+      }
+      if (wait != WAIT_OBJECT_0) {
+        LLDB_LOG(log, "stdio reader: wait failed, result={0}, err={1}", wait,
+                 ::GetLastError());
+        break;
+      }
+      if (!::GetOverlappedResult(stdout_handle, &ov, &bytes_read,
+                                 /*bWait=*/FALSE)) {
+        DWORD get_err = ::GetLastError();
+        if (get_err == ERROR_BROKEN_PIPE || get_err == ERROR_HANDLE_EOF ||
+            get_err == ERROR_OPERATION_ABORTED)
+          break;
+        LLDB_LOG(log, "stdio reader: GetOverlappedResult failed, err={0}",
+                 get_err);
+        break;
+      }
+    }
+
+    if (bytes_read == 0)
+      break; // EOF
+
+    m_delegate.NewProcessOutput(
+        this, llvm::StringRef(buffer.data(), bytes_read));
+  }
+
+  ::CloseHandle(read_event);
+}
+
 } // namespace lldb_private

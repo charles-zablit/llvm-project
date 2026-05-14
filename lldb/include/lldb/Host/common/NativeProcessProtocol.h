@@ -273,6 +273,17 @@ public:
     virtual void
     NewSubprocess(NativeProcessProtocol *parent_process,
                   std::unique_ptr<NativeProcessProtocol> child_process) = 0;
+
+    /// Called by the platform when the inferior writes to stdout/stderr
+    /// through a redirected pipe/pty that the platform owns.
+    ///
+    /// Used on Windows, where the inferior's stdio is read by a dedicated
+    /// reader thread inside the platform (anonymous pipes in overlapped
+    /// mode) rather than forwarded through `m_stdio_communication` via the
+    /// main loop. Implementations must be thread-safe: the hook may be
+    /// invoked from a reader thread, not the main loop thread.
+    virtual void NewProcessOutput(NativeProcessProtocol *process,
+                                  llvm::StringRef data) {}
   };
 
   virtual Status GetLoadedModuleFileSpec(const char *module_path,

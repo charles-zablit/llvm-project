@@ -15,12 +15,17 @@
 #include "IDebugDelegate.h"
 #include "ProcessDebugger.h"
 
+#include <atomic>
+#include <memory>
+#include <thread>
+
 namespace lldb_private {
 
 class HostProcess;
 class NativeProcessWindows;
 class NativeThreadWindows;
 class NativeDebugDelegate;
+class PseudoConsole;
 
 typedef std::shared_ptr<NativeDebugDelegate> NativeDebugDelegateSP;
 
@@ -46,6 +51,8 @@ public:
       return Extension::libraries;
     }
   };
+
+  ~NativeProcessWindows() override;
 
   Status Resume(const ResumeActionList &resume_actions) override;
 
@@ -148,6 +155,30 @@ private:
   // `library:1;` so the client knows to re-read the module list. Initialised
   // to true so the first stop always advertises the initial module set.
   bool m_pending_library_events = true;
+
+  // Retained PseudoConsole for the lldb-server stdio-forwarding path. The
+  // launcher installs the child-side handles and hands the parent-side
+  // back here via ProcessLaunchInfo::TakePTY(); the reader thread below
+  // pulls data off its STDOUT HANDLE using overlapped ReadFile and
+  // forwards it into `NewProcessOutput` on the delegate.
+  std::shared_ptr<PseudoConsole> m_pty;
+
+  // Event signalled during destruction to unblock a pending overlapped
+  // read in the reader thread. Created with CreateEventW; owned here.
+  void *m_stdio_stop_event = nullptr;
+
+  // Background thread that reads the inferior stdout/stderr pipe. Joined
+  // in the destructor after m_stdio_stop_event is signalled and any
+  // pending ReadFile is cancelled.
+  std::thread m_stdio_reader_thread;
+
+  // Spawn m_stdio_reader_thread on m_pty's STDOUT HANDLE. No-op if the
+  // PTY is null, not connected, or not in Pipe mode.
+  void StartStdioReaderThread();
+
+  // Reader-thread body: issues overlapped ReadFile calls and invokes
+  // delegate.NewProcessOutput with each chunk.
+  void StdioReaderThreadLoop();
 };
 
 //------------------------------------------------------------------
