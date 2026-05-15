@@ -6,16 +6,22 @@
 //
 //===----------------------------------------------------------------------===//
 
-#ifndef LLDB_PLUGINS_PROCESS_WINDOWS_MSVCRTCFRAMERECOGNIZER_H
-#define LLDB_PLUGINS_PROCESS_WINDOWS_MSVCRTCFRAMERECOGNIZER_H
+#ifndef LLDB_PLUGINS_DYNAMICLOADER_WINDOWS_MSVCRTCFRAMERECOGNIZER_H
+#define LLDB_PLUGINS_DYNAMICLOADER_WINDOWS_MSVCRTCFRAMERECOGNIZER_H
 
-#include "ProcessWindows.h"
 #include "lldb/Target/StackFrameRecognizer.h"
 
 namespace lldb_private {
 
-/// Registers the MSVC run-time check failure frame recognizer with the target.
-void RegisterMSVCRTCFrameRecognizer(ProcessWindows &process);
+class Target;
+
+/// Registers the MSVC run-time check failure frame recognizer with the
+/// supplied target. Safe to call more than once per target -- the second
+/// call is a no-op because StackFrameRecognizerManager dedupes by symbol
+/// name. Process-plugin agnostic: the recognizer fires when frame 0 is
+/// `failwithmessage` regardless of whether the inferior is being driven
+/// by ProcessWindows or ProcessGDBRemote.
+void RegisterMSVCRTCFrameRecognizer(Target &target);
 
 /// Recognized stack frame for an MSVC _RTC failure. Carries the human-readable
 /// stop description extracted from failwithmessage's \c msg parameter.
@@ -38,4 +44,4 @@ public:
 
 } // namespace lldb_private
 
-#endif // LLDB_PLUGINS_PROCESS_WINDOWS_MSVCRTCFRAMERECOGNIZER_H
+#endif // LLDB_PLUGINS_DYNAMICLOADER_WINDOWS_MSVCRTCFRAMERECOGNIZER_H

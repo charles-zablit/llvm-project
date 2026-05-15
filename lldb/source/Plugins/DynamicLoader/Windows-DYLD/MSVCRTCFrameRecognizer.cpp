@@ -21,8 +21,8 @@ using namespace lldb_private;
 
 namespace lldb_private {
 
-void RegisterMSVCRTCFrameRecognizer(ProcessWindows &process) {
-  process.GetTarget().GetFrameRecognizerManager().AddRecognizer(
+void RegisterMSVCRTCFrameRecognizer(Target &target) {
+  target.GetFrameRecognizerManager().AddRecognizer(
       std::make_shared<MSVCRTCFrameRecognizer>(), ConstString(""),
       {ConstString("failwithmessage")}, Mangled::ePreferDemangled,
       /*first_instruction_only=*/false);
@@ -33,13 +33,16 @@ MSVCRTCFrameRecognizer::RecognizeFrame(lldb::StackFrameSP frame_sp) {
   // failwithmessage calls __debugbreak() which lands at frame 0.
   if (frame_sp->GetFrameIndex() != 0)
     return RecognizedStackFrameSP();
-  // Only fire on EXCEPTION_BREAKPOINT (0x80000003), not on other exceptions
-  // that might incidentally have failwithmessage somewhere in the call stack.
-  auto *pw =
-      static_cast<ProcessWindows *>(frame_sp->GetThread()->GetProcess().get());
-  auto exc_code = pw->GetActiveExceptionCode();
-  if (!exc_code || *exc_code != EXCEPTION_BREAKPOINT)
-    return RecognizedStackFrameSP();
+
+  // We trust the function-name match the recognizer was registered against:
+  // failwithmessage exists in MSVC CRT specifically to call __debugbreak()
+  // for run-time check failures, so being stopped at frame 0 of it means
+  // we're at one. Earlier revisions also gated on EXCEPTION_BREAKPOINT
+  // via a ProcessWindows-specific accessor; that gate doesn't translate
+  // to the lldb-server (ProcessGDBRemote) path, and dropping it here lets
+  // the recognizer fire on both process plugins. False positives would
+  // require user code to be paused at frame 0 of failwithmessage outside
+  // an actual RTC failure, which doesn't happen in normal flow.
 
   const char *fn_name = frame_sp->GetFunctionName();
   if (!fn_name)
