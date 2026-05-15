@@ -139,18 +139,25 @@ RunInTerminal(DAP &dap, const protocol::LaunchRequestArguments &arguments) {
   std::future<lldb::SBError> did_attach_message_success =
       comm_channel.NotifyDidAttach();
 
-// We just attached to the runInTerminal launcher, which was waiting to be
-// attached. We now resume it, so it can receive the didAttach notification
-// and then perform the exec. Upon continuing, the debugger will stop the
-// process right in the middle of the exec. To the user, what we are doing is
-// transparent, as they will only be able to see the process since the exec,
-// completely unaware of the preparatory work.
-//
-// On Windows, the debuggee itself is waiting to be attached to. There is no
-// need to continue.
-#ifndef _WIN32
+  // We just attached to the runInTerminal launcher, which was waiting to be
+  // attached. We now resume it, so it can receive the didAttach notification
+  // and then perform the exec. Upon continuing, the debugger will stop the
+  // process right in the middle of the exec. To the user, what we are doing is
+  // transparent, as they will only be able to see the process since the exec,
+  // completely unaware of the preparatory work.
+  //
+  // On Windows, the launcher uses CREATE_SUSPENDED + DebugActiveProcess,
+  // which produces two synthetic breakpoints before user code: the
+  // kernel-injected DbgUiRemoteBreakin int3 (consumed by the process plugin
+  // as the initial stop) and ntdll's loader LdrpDoDebuggerBreak when the
+  // main thread resumes. We MUST Continue() in sync mode here so the loader
+  // break stop is consumed on the *private* listener and never broadcast to
+  // the DAP event thread; ConfigurationDone's later async Continue() then
+  // resumes past it to user code. Skipping this on Windows leaks the loader
+  // break to the client and surfaces as a spurious user-visible stop, which
+  // makes runInTerminal tests fail (`stopped` instead of `exited`, breakpoint
+  // never resolved, etc.).
   dap.target.GetProcess().Continue();
-#endif
 
   // Return the debugger to its prior async state.
   scope_sync_mode.reset();
