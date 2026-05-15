@@ -79,6 +79,24 @@ Status NativeThreadWindows::DoResume(lldb::StateType resume_state) {
   }
 
   if (resume_state == eStateStepping || resume_state == eStateRunning) {
+    // Clear any stop info left over from a previous stop. Without this, a
+    // thread that didn't participate in the next stop carries forward its
+    // old reason -- e.g. a system-breakpoint thread carries a stale
+    // eStopReasonException across a continue, and lldb-dap's
+    // SendThreadStoppedEvent picks it as "focused" instead of the thread
+    // that actually hit the new breakpoint. Mirrors NativeThreadLinux.
+    //
+    // Reset signo too: GetJSONThreadsInfo emits whatever signo the thread
+    // last carried, and a stale SIGTRAP makes the client's
+    // ProcessGDBRemote::SetThreadStopInfo fall through into its
+    // SIGTRAP-without-reason handler (looks up BP by PC, doesn't find
+    // one, returns eStopReasonSignal). Bystander threads in multi-thread
+    // breakpoint scenarios then look like "stopped by signal" instead of
+    // "no stop reason" -- TestTwoHitsOneActual fails on exactly this.
+    m_stop_info = ThreadStopInfo();
+    m_stop_info.reason = lldb::eStopReasonNone;
+    m_stop_description.clear();
+
     DWORD previous_suspend_count = 0;
     HANDLE thread_handle = m_host_thread.GetNativeThread().GetSystemHandle();
     do {

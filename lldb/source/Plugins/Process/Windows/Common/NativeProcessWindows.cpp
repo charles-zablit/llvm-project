@@ -508,8 +508,6 @@ NativeProcessWindows::OnDebugException(bool first_chance,
   // Let the debugger establish the internal status.
   ProcessDebugger::OnDebugException(first_chance, record);
 
-  static bool initial_stop = false;
-
   switch (record.GetExceptionCode()) {
   case DWORD(STATUS_SINGLE_STEP):
   case STATUS_WX86_SINGLE_STEP: {
@@ -590,8 +588,8 @@ NativeProcessWindows::OnDebugException(bool first_chance,
       }
     }
 
-    if (!initial_stop) {
-      initial_stop = true;
+    if (m_initial_system_bps_remaining > 0) {
+      --m_initial_system_bps_remaining;
       LLDB_LOG(log,
                "Hit loader breakpoint at address {0:x}, setting initial stop "
                "event.",

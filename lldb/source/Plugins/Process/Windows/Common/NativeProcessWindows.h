@@ -150,6 +150,14 @@ private:
   Status CacheLoadedModules();
   std::map<lldb_private::FileSpec, lldb::addr_t> m_loaded_modules;
 
+  // Number of initial system STATUS_BREAKPOINTs we still need to swallow
+  // silently before the first user stop. CreateProcess(DEBUG_PROCESS, ...)
+  // produces one (LdrpDoDebuggerBreak in ntdll); DebugActiveProcess
+  // produces two (DbgUiRemoteBreakin injected by the kernel + the loader
+  // BP once the primary thread is resumed). Initialised in the
+  // constructors below.
+  int m_initial_system_bps_remaining = 1;
+
   // Set whenever an OS DLL load/unload event has been seen since the last
   // stop reply. The stop-reply builder flips it back to false and emits
   // `library:1;` so the client knows to re-read the module list. Initialised
