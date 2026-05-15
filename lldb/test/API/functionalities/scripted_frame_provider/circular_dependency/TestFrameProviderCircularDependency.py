@@ -165,7 +165,6 @@ class FrameProviderCircularDependencyTestCase(TestBase):
                 frame.GetFunctionName(), f"Frame {i} should have function name"
             )
 
-    @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr24778")
     def test_circular_dependency_evaluate_expression_in_get_frame(self):
         """
         Test that calling EvaluateExpression in get_frame_at_index doesn't

@@ -186,10 +186,6 @@ class ThreadStateTestCase(TestBase):
         # Let the process run to completion
         self.runCmd("process continue")
 
-    @expectedFailureAll(
-        oslist=["windows"],
-        bugnumber="llvm.org/pr24668: Breakpoints not resolved correctly",
-    )
     @skipIfDarwin  # llvm.org/pr15824 thread states not properly maintained and <rdar://problem/28557237>
     @no_debug_info_test
     def test_process_interrupt(self):
