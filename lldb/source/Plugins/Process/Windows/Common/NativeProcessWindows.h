@@ -148,7 +148,13 @@ private:
                        NativeDelegate &delegate, llvm::Error &E);
 
   Status CacheLoadedModules();
-  std::map<lldb_private::FileSpec, lldb::addr_t> m_loaded_modules;
+  // Stored in Toolhelp32 enumeration order (which is the OS loader order)
+  // rather than std::map's lexicographic order, so the qXfer:libraries:read
+  // response and `target modules list` reflect what the loader actually
+  // mapped in. The legacy in-process plugin already preserves loader order
+  // and several Shell tests pin to it.
+  std::vector<std::pair<lldb_private::FileSpec, lldb::addr_t>>
+      m_loaded_modules;
 
   // Number of initial system STATUS_BREAKPOINTs we still need to swallow
   // silently before the first user stop. CreateProcess(DEBUG_PROCESS, ...)
