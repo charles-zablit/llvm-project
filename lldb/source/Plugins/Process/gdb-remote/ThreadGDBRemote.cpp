@@ -271,6 +271,16 @@ void ThreadGDBRemote::WillResume(StateType resume_state) {
 }
 
 void ThreadGDBRemote::RefreshStateAfterStop() {
+  // Stamp this thread as stopped. ThreadList::DidStop only transitions
+  // threads from a running state to stopped, so newly-created
+  // ThreadGDBRemotes -- whose Thread::m_state defaults to
+  // eStateUnloaded -- never make it to eStateStopped without this. The
+  // legacy in-process Windows plugin's TargetThreadWindows does the
+  // equivalent in its RefreshStateAfterStop, so SBThread::IsStopped()
+  // returned false only on the lldb-server path. Mirror that here so
+  // every gdb-remote target's threads report a usable state after
+  // each stop.
+  SetState(eStateStopped);
   // Invalidate all registers in our register context. We don't set "force" to
   // true because the stop reply packet might have had some register values
   // that were expedited and these will already be copied into the register
