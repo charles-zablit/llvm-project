@@ -47,6 +47,65 @@ using namespace llvm;
 
 namespace lldb_private {
 
+namespace {
+// Decode the well-known ExceptionInformation[] payloads for a few exception
+// codes into a human-readable suffix. Mirrors
+// ProcessWindows::DumpAdditionalExceptionInformation -- that lives on the
+// in-process plugin side, so when the client is ProcessGDBRemote (lldb-server)
+// the rich text never reaches the user. Generate it here and ship it as the
+// stop-info description so both paths look the same.
+void AppendExceptionDetails(llvm::raw_ostream &stream,
+                            const ExceptionRecord &record) {
+  const int addr_min_width = 2 + 8;
+  const std::vector<ULONG_PTR> &args = record.GetExceptionArguments();
+  switch (record.GetExceptionCode()) {
+  case EXCEPTION_ACCESS_VIOLATION: {
+    if (args.size() < 2)
+      break;
+    stream << ": ";
+    switch (args[0]) {
+    case 0:
+      stream << "Access violation reading";
+      break;
+    case 1:
+      stream << "Access violation writing";
+      break;
+    case 8:
+      stream << "User-mode data execution prevention (DEP) violation at";
+      break;
+    default:
+      stream << "Unknown access violation (code " << args[0] << ") at";
+      break;
+    }
+    stream << " location " << llvm::format_hex(args[1], addr_min_width);
+    break;
+  }
+  case EXCEPTION_IN_PAGE_ERROR: {
+    if (args.size() < 3)
+      break;
+    stream << ": ";
+    switch (args[0]) {
+    case 0:
+      stream << "In page error reading";
+      break;
+    case 1:
+      stream << "In page error writing";
+      break;
+    case 8:
+      stream << "User-mode data execution prevention (DEP) violation at";
+      break;
+    default:
+      stream << "Unknown page loading error (code " << args[0] << ") at";
+      break;
+    }
+    stream << " location " << llvm::format_hex(args[1], addr_min_width)
+           << " (status code " << llvm::format_hex(args[2], 8) << ")";
+    break;
+  }
+  }
+}
+} // namespace
+
 NativeProcessWindows::NativeProcessWindows(ProcessLaunchInfo &launch_info,
                                            NativeDelegate &delegate,
                                            llvm::Error &E)
@@ -656,6 +715,7 @@ NativeProcessWindows::OnDebugException(bool first_chance,
                   << llvm::format_hex(record.GetExceptionCode(), 8)
                   << " encountered at address "
                   << llvm::format_hex(record.GetExceptionAddress(), 8);
+      AppendExceptionDetails(desc_stream, record);
       StopThread(record.GetThreadID(), StopReason::eStopReasonException,
                  desc.c_str());
 
