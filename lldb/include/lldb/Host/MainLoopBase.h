@@ -14,9 +14,12 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/Support/ErrorHandling.h"
 #include <chrono>
+#include <cstdint>
 #include <functional>
 #include <mutex>
 #include <queue>
+#include <tuple>
+#include <vector>
 
 namespace lldb_private {
 
@@ -99,10 +102,25 @@ protected:
   std::optional<TimePoint> GetNextWakeupTime();
 
   std::mutex m_callback_mutex;
-  std::priority_queue<std::pair<TimePoint, Callback>,
-                      std::vector<std::pair<TimePoint, Callback>>,
-                      llvm::on_first<std::greater<TimePoint>>>
+  // Triple of (when, monotonic-sequence, callback). The sequence number is
+  // a tiebreaker on equal time points so callbacks added with the same
+  // (default-constructed) TimePoint via AddPendingCallback are still
+  // processed in insertion order. Without it std::priority_queue's heap
+  // can return them in arbitrary order, which corrupts ordered streams
+  // (e.g. consecutive stdio chunks from a reader thread can pop in
+  // reverse and split a line in two on the wire).
+  using CallbackEntry = std::tuple<TimePoint, uint64_t, Callback>;
+  struct CallbackEntryGreater {
+    bool operator()(const CallbackEntry &lhs, const CallbackEntry &rhs) const {
+      if (std::get<0>(lhs) != std::get<0>(rhs))
+        return std::get<0>(lhs) > std::get<0>(rhs);
+      return std::get<1>(lhs) > std::get<1>(rhs);
+    }
+  };
+  std::priority_queue<CallbackEntry, std::vector<CallbackEntry>,
+                      CallbackEntryGreater>
       m_callbacks;
+  uint64_t m_callback_sequence = 0;
   bool m_terminate_request : 1;
 
 private:

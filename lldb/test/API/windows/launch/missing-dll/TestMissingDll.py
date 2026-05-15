@@ -25,4 +25,11 @@ class MissingDllTestCase(TestBase):
 
         error = lldb.SBError()
         target.Launch(launch_info, error)
-        self.assertFailure(error, "Process prematurely exited with 0xc0000135")
+        # The lldb-server path wraps the underlying error with
+        # `Cannot launch '<path>': ` (ProcessGDBRemote::DoLaunch); the
+        # in-process ProcessWindows path returns the bare error string. Match
+        # the substring so both paths pass.
+        self.assertFalse(error.Success(), "expected launch to fail")
+        self.assertIn(
+            "Process prematurely exited with 0xc0000135", error.GetCString()
+        )

@@ -19,8 +19,9 @@ bool MainLoopBase::AddCallback(const Callback &callback, TimePoint point) {
     std::lock_guard<std::mutex> lock{m_callback_mutex};
     // We need to interrupt the main thread if this callback is scheduled to
     // execute at an earlier time than the earliest callback registered so far.
-    interrupt_needed = m_callbacks.empty() || point < m_callbacks.top().first;
-    m_callbacks.emplace(point, callback);
+    interrupt_needed =
+        m_callbacks.empty() || point < std::get<0>(m_callbacks.top());
+    m_callbacks.emplace(point, m_callback_sequence++, callback);
   }
   if (interrupt_needed)
     interrupt_succeeded = Interrupt();
@@ -33,9 +34,12 @@ void MainLoopBase::ProcessCallbacks() {
     {
       std::lock_guard<std::mutex> lock{m_callback_mutex};
       if (m_callbacks.empty() ||
-          std::chrono::steady_clock::now() < m_callbacks.top().first)
+          std::chrono::steady_clock::now() < std::get<0>(m_callbacks.top()))
         return;
-      callback = std::move(m_callbacks.top().second);
+      // top() returns const-ref; get the callback out via const-cast on the
+      // queue's underlying storage so we can move it.
+      callback = std::move(
+          const_cast<Callback &>(std::get<2>(m_callbacks.top())));
       m_callbacks.pop();
     }
 
@@ -47,5 +51,5 @@ std::optional<MainLoopBase::TimePoint> MainLoopBase::GetNextWakeupTime() {
   std::lock_guard<std::mutex> lock(m_callback_mutex);
   if (m_callbacks.empty())
     return std::nullopt;
-  return m_callbacks.top().first;
+  return std::get<0>(m_callbacks.top());
 }
