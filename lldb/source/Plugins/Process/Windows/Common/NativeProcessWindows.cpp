@@ -509,11 +509,7 @@ NativeProcessWindows::OnDebugException(bool first_chance,
   ProcessDebugger::OnDebugException(first_chance, record);
 
   static bool initial_stop = false;
-  if (!first_chance) {
-    SetState(eStateStopped, false);
-  }
 
-  ExceptionResult result = ExceptionResult::SendToApplication;
   switch (record.GetExceptionCode()) {
   case DWORD(STATUS_SINGLE_STEP):
   case STATUS_WX86_SINGLE_STEP: {
@@ -640,6 +636,20 @@ NativeProcessWindows::OnDebugException(bool first_chance,
              record.GetExceptionCode(), record.GetExceptionAddress(),
              first_chance);
 
+    // On a first-chance non-breakpoint exception (typically
+    // STATUS_ACCESS_VIOLATION from a crash), let the inferior's SEH chain
+    // run before stopping the debugger. If no handler claims it, Windows
+    // re-raises the same exception as a second-chance event and we land
+    // back here with first_chance == 0.
+    //
+    // Crucially, do NOT call StopThread or SetState on first chance. The
+    // in-process ProcessWindows::OnDebugException is deliberately a
+    // no-op here for the same reason: stopping all threads while we
+    // simultaneously tell Windows DBG_EXCEPTION_NOT_HANDLED blocks SEH
+    // dispatch, and the second-chance event never fires.
+    if (first_chance)
+      return ExceptionResult::SendToApplication;
+
     {
       std::string desc;
       llvm::raw_string_ostream desc_stream(desc);
@@ -653,15 +663,8 @@ NativeProcessWindows::OnDebugException(bool first_chance,
       SetState(eStateStopped, true);
     }
 
-    // For non-breakpoints, give the application a chance to handle the
-    // exception first.
-    if (first_chance)
-      result = ExceptionResult::SendToApplication;
-    else
-      result = ExceptionResult::BreakInDebugger;
+    return ExceptionResult::BreakInDebugger;
   }
-
-  return result;
 }
 
 void NativeProcessWindows::OnCreateThread(const HostThread &new_thread) {
