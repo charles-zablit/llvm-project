@@ -99,17 +99,12 @@ Status NativeThreadWindows::DoResume(lldb::StateType resume_state) {
 }
 
 std::string NativeThreadWindows::GetName() {
-  if (!m_name.empty())
-    return m_name;
-
-  // Name is not a property of the Windows thread. Create one with the
-  // process's.
-  NativeProcessProtocol &process = GetProcess();
-  ProcessInstanceInfo process_info;
-  if (Host::GetProcessInfo(process.GetID(), process_info)) {
-    std::string process_name(process_info.GetName());
-    m_name = process_name;
-  }
+  // Windows threads only have a name when the inferior calls
+  // SetThreadDescription explicitly; LLDB picks that up via OnSetThreadName
+  // and stashes it in m_name. Without one, return empty so the gdb-remote
+  // stop reply doesn't carry a synthetic name (the executable name was used
+  // here previously, but that confuses callers expecting an actual thread
+  // name and breaks shell tests that match on the stop-info line).
   return m_name;
 }
 
