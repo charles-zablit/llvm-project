@@ -18,6 +18,7 @@
 #include <atomic>
 #include <memory>
 #include <thread>
+#include <unordered_set>
 
 namespace lldb_private {
 
@@ -163,6 +164,18 @@ private:
   // BP once the primary thread is resumed). Initialised in the
   // constructors below.
   int m_initial_system_bps_remaining = 1;
+
+  // Addresses where lldb has previously planted a software BP that has since
+  // been removed (z0). Cleared on next Z0 at the same address. Used by
+  // OnDebugException to recognise STATUS_BREAKPOINT exceptions that the
+  // kernel had already queued *before* lldb removed the BP, e.g. a sibling
+  // thread that hit the BP a microsecond before our step-over plan disabled
+  // it. Without this, FindSoftwareBreakpoint() returns false for those
+  // queued exceptions and we mis-classify them as user `int3`s, leaving the
+  // PC one byte past the BP and crashing the inferior on the next continue.
+  // Mirrors how ProcessWindows (in-process) keeps the BreakpointSite around
+  // across a logical disable.
+  std::unordered_set<lldb::addr_t> m_recently_removed_bps;
 
   // Set whenever an OS DLL load/unload event has been seen since the last
   // stop reply. The stop-reply builder flips it back to false and emits

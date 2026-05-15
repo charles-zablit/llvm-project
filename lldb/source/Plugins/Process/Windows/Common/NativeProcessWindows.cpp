@@ -408,16 +408,21 @@ size_t NativeProcessWindows::GetSoftwareBreakpointPCOffset() {
 }
 
 bool NativeProcessWindows::FindSoftwareBreakpoint(lldb::addr_t addr) {
-  auto it = m_software_breakpoints.find(addr);
-  if (it == m_software_breakpoints.end())
-    return false;
-  return true;
+  if (m_software_breakpoints.find(addr) != m_software_breakpoints.end())
+    return true;
+  // Also recognise BPs that were just removed: a queued exception from a
+  // sibling thread may arrive after the disable. See
+  // m_recently_removed_bps's declaration for full context.
+  return m_recently_removed_bps.find(addr) != m_recently_removed_bps.end();
 }
 
 Status NativeProcessWindows::SetBreakpoint(lldb::addr_t addr, uint32_t size,
                                            bool hardware) {
   if (hardware)
     return SetHardwareBreakpoint(addr, size);
+  // Re-arming a BP at this address means any queued exceptions from before
+  // the prior remove can no longer race; drop the shadow entry.
+  m_recently_removed_bps.erase(addr);
   return SetSoftwareBreakpoint(addr, size);
 }
 
@@ -425,6 +430,10 @@ Status NativeProcessWindows::RemoveBreakpoint(lldb::addr_t addr,
                                               bool hardware) {
   if (hardware)
     return RemoveHardwareBreakpoint(addr);
+  // Remember the address so a still-queued STATUS_BREAKPOINT exception from
+  // before the remove is treated as a (now-stale) BP hit and not as a user
+  // int3.
+  m_recently_removed_bps.insert(addr);
   return RemoveSoftwareBreakpoint(addr);
 }
 
@@ -597,8 +606,14 @@ NativeProcessWindows::OnDebugException(bool first_chance,
 
     SetState(eStateStopped, true);
 
-    // Continue the debugger.
-    return ExceptionResult::MaskException;
+    // Mirror ProcessWindows (in-process): block until client issues continue.
+    // If we return MaskException the DebuggerThread will immediately drain the
+    // next queued exception (e.g. a sibling thread that hit the same BP a
+    // microsecond after us) and stamp a stale stop_info on a bystander thread.
+    // That bystander then votes "stop" in ThreadList::ShouldStop on the next
+    // round, deflecting our step-over plan's auto-continue and surfacing the
+    // wrong stop reason to the user.
+    return ExceptionResult::BreakInDebugger;
   }
   case DWORD(STATUS_BREAKPOINT):
   case STATUS_WX86_BREAKPOINT:
@@ -616,7 +631,10 @@ NativeProcessWindows::OnDebugException(bool first_chance,
         // The current PC is AFTER the BP opcode, on all architectures.
         reg_ctx.SetPC(reg_ctx.GetPC() - GetSoftwareBreakpointPCOffset());
         SetState(eStateStopped, true);
-        return ExceptionResult::MaskException;
+        // See comment above STATUS_SINGLE_STEP: serialize against client
+        // continues to keep queued sibling-thread exceptions from being drained
+        // before we deliver this stop.
+        return ExceptionResult::BreakInDebugger;
       } else {
         // This block of code will only be entered in case of a hardware
         // watchpoint or breakpoint hit on AArch64. However, we only handle
@@ -642,7 +660,7 @@ NativeProcessWindows::OnDebugException(bool first_chance,
                     .str();
             StopThread(thread_id, StopReason::eStopReasonWatchpoint, desc);
             SetState(eStateStopped, true);
-            return ExceptionResult::MaskException;
+            return ExceptionResult::BreakInDebugger;
           }
         }
       }
@@ -672,10 +690,11 @@ NativeProcessWindows::OnDebugException(bool first_chance,
     // Any remaining STATUS_BREAKPOINT is a breakpoint instruction in the
     // program's own code (e.g. `int3`, `__debugbreak()`, or
     // `__builtin_debugtrap()`) that lldb did not plant itself. Stop the
-    // debugger and let the user decide what to do. Crucially we must return
-    // MaskException, not SendToApplication, because on Windows an unhandled
-    // STATUS_BREAKPOINT is fatal to the process — the subsequent user
-    // `continue` would have nothing to resume.
+    // debugger and let the user decide what to do. We BreakInDebugger here
+    // for the same reason as user-planted BPs (don't drain queued exceptions
+    // before the client reacts) and we cannot use SendToApplication: an
+    // unhandled STATUS_BREAKPOINT is fatal to the process on Windows so the
+    // subsequent user `continue` would have nothing to resume.
     {
       std::string desc =
           formatv("Exception {0} encountered at address {1}",
@@ -686,7 +705,7 @@ NativeProcessWindows::OnDebugException(bool first_chance,
                  std::move(desc));
       SetState(eStateStopped, true);
     }
-    return ExceptionResult::MaskException;
+    return ExceptionResult::BreakInDebugger;
   default:
     LLDB_LOG(log,
              "Debugger thread reported exception {0:x} at address {1:x} "
