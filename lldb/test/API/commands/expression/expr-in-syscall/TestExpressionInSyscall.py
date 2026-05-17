@@ -8,6 +8,19 @@ from lldbsuite.test import lldbutil
 
 class ExprSyscallTestCase(TestBase):
     @expectedFailureNetBSD
+    @expectedFailureAll(
+        oslist=["windows"],
+        bugnumber=(
+            "DebugBreakProcess injects a brand-new DbgUiRemoteBreakin thread "
+            "to deliver the halt; an expression jit'd while the original user "
+            "thread is parked inside a kernel-mode syscall AVs at the call "
+            "site (reading 0xffffffffffffffff) regardless of which thread "
+            "lldb selects. The corresponding fix needs to either kick the "
+            "user thread out of the syscall before redirecting it (Linux's "
+            "tgkill+SIGSTOP route) or run the expression on the freshly "
+            "injected thread with a synthesised user stack."
+        ),
+    )
     def test_setpgid(self):
         self.build()
 

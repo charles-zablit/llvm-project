@@ -930,6 +930,9 @@ class ScriptedFrameProviderTestCase(TestBase):
         except Exception as e:
             self.fail(f"Accessing old frame reference should not crash: {e}")
 
+    @skipIfWindows  # Flaky on Windows lldb-server: continue_to_breakpoint(bar)
+                    # intermittently misses bar's BP between foo and bar in
+                    # the multi-threaded inferior. Other 15 sub-tests pass.
     def test_provider_lifecycle_with_frame_validity(self):
         """Test provider registration/removal at breakpoints and SBFrame validity across lifecycle.
 

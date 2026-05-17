@@ -411,6 +411,17 @@ class LoadUnloadTestCase(TestBase):
         remote=False,
     )
     @expectedFailureAll(oslist=["windows"], archs=["aarch64"])
+    @expectedFailureAll(
+        oslist=["windows"],
+        archs=["x86_64"],
+        bugnumber=(
+            "lldb-server on Windows doesn't stop on LOAD_DLL_DEBUG_EVENT, so "
+            "the static initializer in the just-loaded DLL runs before the "
+            "client has a chance to resolve the pending breakpoint against "
+            "the new module and plant the int3 byte. See "
+            "TestBreakInLoadedDylib for the full diagnosis."
+        ),
+    )
     def test_static_init_during_load(self):
         """Test that we can set breakpoints correctly in static initializers"""
         self.copy_shlibs_to_remote()
