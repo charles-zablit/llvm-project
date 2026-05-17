@@ -205,8 +205,31 @@ void ABIX86::AugmentRegisterInfo(
   if (!process_sp)
     return;
 
+  // Determine the GPR base size. Prefer the target architecture, but fall
+  // back to the register list itself when the target arch isn't set yet --
+  // ProcessGDBRemote::AddRemoteRegisters calls us during DidAttach (see
+  // the comment over the `Process::GetABI` warning at the call site), and
+  // on Windows `process attach -p PID` reaches that codepath with a Target
+  // whose ArchSpec is still empty (no executable was added before the
+  // attach). Without this fallback we use the i386 base-register map for
+  // an x86_64 inferior, which means none of `eax/ax/ah/al` (and the rN
+  // family) get added as sub-registers of `rax`/`rN`, and TestRegisters
+  // ::test_convenience_registers_with_process_attach fails on
+  // `register read eax`.
   uint32_t gpr_base_size =
       process_sp->GetTarget().GetArchitecture().GetAddressByteSize();
+  if (gpr_base_size == 0) {
+    for (const auto &reg : regs) {
+      if (reg.name == "rax" || reg.name == "rsp" || reg.name == "rip") {
+        gpr_base_size = 8;
+        break;
+      }
+      if (reg.name == "eax" || reg.name == "esp" || reg.name == "eip") {
+        gpr_base_size = 4;
+        break;
+      }
+    }
+  }
 
   // primary map from a base register to its subregisters
   BaseRegToRegsMap base_reg_map = makeBaseRegMap(gpr_base_size == 8);
