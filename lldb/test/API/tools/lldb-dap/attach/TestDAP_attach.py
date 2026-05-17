@@ -96,7 +96,7 @@ class TestDAP_attach(lldbdap_testcase.DAPTestCaseBase):
             if self.spawn_thread.is_alive():
                 self.spawn_thread.join(timeout=10)
 
-    @expectedFailureWindows
+    @skipIfWindows  # lldb-dap crashes on Windows in the waitFor + partial-name path
     def test_by_partial_name_waitFor(self):
         """
         Tests waiting for and attaching to a process by partial process name
