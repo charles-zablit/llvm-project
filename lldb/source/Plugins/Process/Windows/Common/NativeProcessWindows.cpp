@@ -253,8 +253,18 @@ NativeProcessWindows::GetThreadByID(lldb::tid_t thread_id) {
 Status NativeProcessWindows::Halt() {
   bool caused_stop = false;
   StateType state = GetState();
-  if (state != eStateStopped)
-    return HaltProcess(caused_stop);
+  if (state != eStateStopped) {
+    // DebugBreakProcess injects a brand-new thread that fires a user int3 in
+    // ntdll!DbgUiRemoteBreakin. We need to recognise that as the halt
+    // acknowledgement when it surfaces in OnDebugException, so the client
+    // sees a SIGSTOP-style signal stop rather than a "user int3" exception
+    // -- TestThreadStates::test_process_interrupt asserts on exactly this.
+    m_pending_halt = true;
+    Status err = HaltProcess(caused_stop);
+    if (err.Fail() || !caused_stop)
+      m_pending_halt = false;
+    return err;
+  }
   return Status();
 }
 
@@ -696,6 +706,59 @@ NativeProcessWindows::OnDebugException(bool first_chance,
     // unhandled STATUS_BREAKPOINT is fatal to the process on Windows so the
     // subsequent user `continue` would have nothing to resume.
     {
+      // If a Halt()/Interrupt() is pending, the int3 we just saw is the
+      // DebugBreakProcess-injected DbgUiRemoteBreakin thread, not a real
+      // user int3. Surface this as a SIGSTOP-style signal stop on the
+      // injected thread (which is what GetSelectedThread will return to
+      // the client) so it lines up with how Linux/macOS report
+      // `process interrupt` (eStopReasonSignal). Without this the client
+      // sees eStopReasonException and a SIGTRAP description, which
+      // mismatches the cross-platform contract that
+      // TestThreadStates::test_process_interrupt asserts on.
+      if (m_pending_halt) {
+        LLDB_LOG(log,
+                 "DebugBreakProcess injection treated as Halt SIGSTOP "
+                 "for tid {0:x}",
+                 record.GetThreadID());
+        m_pending_halt = false;
+        // DebugBreakProcess(GetCurrentProcess()) creates a brand-new
+        // DbgUiRemoteBreakin thread that runs int3. Other backends
+        // (Linux, Darwin) instead deliver a signal *to the existing
+        // thread*; the user-visible test contract is that the originally
+        // running thread reports a SIGSTOP-style stop reason
+        // (TestThreadStates::test_process_interrupt).
+        //
+        // Stamp eStopReasonSignal on the oldest user thread (closest
+        // analogue to "main"); also stamp the injected thread so a
+        // client landing on it via the wire `T thread:` field still sees
+        // Signal. Make the injected thread the wire-current thread (it
+        // legitimately triggered the kernel debug event), but the test's
+        // GetSelectedThread() can pick any user thread that has Signal
+        // set.
+        ThreadStopInfo signal_info;
+        signal_info.reason = StopReason::eStopReasonSignal;
+        signal_info.signo = 19; // SIGSTOP on POSIX; <signal.h> on Windows
+                                // doesn't define SIGSTOP, so use the
+                                // numeric value directly.
+
+        // Halt all threads at the kernel level.
+        for (uint32_t i = 0; i < m_threads.size(); ++i) {
+          auto t = static_cast<NativeThreadWindows *>(m_threads[i].get());
+          if (t->DoStop().Fail())
+            exit(1);
+        }
+        if (!m_threads.empty()) {
+          auto first = static_cast<NativeThreadWindows *>(m_threads[0].get());
+          first->SetStopReason(signal_info, "interrupt");
+        }
+        SetCurrentThreadID(record.GetThreadID());
+        if (NativeThreadWindows *injected =
+                GetThreadByID(record.GetThreadID()))
+          injected->SetStopReason(signal_info, "interrupt");
+        SetState(eStateStopped, true);
+        return ExceptionResult::BreakInDebugger;
+      }
+
       std::string desc =
           formatv("Exception {0} encountered at address {1}",
                   llvm::format_hex(record.GetExceptionCode(), 8),

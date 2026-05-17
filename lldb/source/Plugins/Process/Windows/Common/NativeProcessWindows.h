@@ -165,6 +165,14 @@ private:
   // constructors below.
   int m_initial_system_bps_remaining = 1;
 
+  // Set when Halt() / Interrupt() schedules a DebugBreakProcess injection;
+  // consumed by OnDebugException's user-int3 fallback to recognise the
+  // injected breakpoint as the halt acknowledgement (rather than a user
+  // int3 instruction in the program). Lets us surface the stop as
+  // eStopReasonSignal (SIGSTOP) on a user thread, matching the gdb-remote
+  // semantics that other backends produce for `Ctrl-C` / `process interrupt`.
+  bool m_pending_halt = false;
+
   // Addresses where lldb has previously planted a software BP that has since
   // been removed (z0). Cleared on next Z0 at the same address. Used by
   // OnDebugException to recognise STATUS_BREAKPOINT exceptions that the
