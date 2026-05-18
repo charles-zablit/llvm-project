@@ -157,7 +157,15 @@ private:
                                          const ExceptionRecord &record);
 
   Status CacheLoadedModules();
-  std::map<lldb_private::FileSpec, lldb::addr_t> m_loaded_modules;
+  // Tracked incrementally via OnLoadDll/OnUnloadDll plus a
+  // OnDebuggerConnected seed so qXfer:libraries:read returns a fresh list
+  // even when the inferior has just loaded a DLL — the kernel fires
+  // LOAD_DLL_DEBUG_EVENT before the loader finishes linking the new module
+  // into the PEB, so a CreateToolhelp32Snapshot in OnLoadDll silently
+  // misses it. Vector preserves load order (DynamicLoaderWindowsDYLD
+  // scans for the executable image and prefers the first hit).
+  std::vector<std::pair<lldb_private::FileSpec, lldb::addr_t>>
+      m_loaded_modules;
 
   /// Set whenever an OS DLL load/unload event has been seen since the last stop
   /// reply.

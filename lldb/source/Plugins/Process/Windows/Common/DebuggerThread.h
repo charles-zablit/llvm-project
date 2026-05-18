@@ -42,6 +42,19 @@ public:
 
   void ContinueAsyncException(ExceptionResult result);
 
+  // Releases the debugger thread from a load/unload DLL event wait so the
+  // next ContinueDebugEvent can fire. Mirrors ContinueAsyncException but
+  // for DLL events, which carry no ExceptionResult. Safe to call when no
+  // DLL-event wait is in progress (no-op).
+  void ContinueAsyncDllEvent();
+
+  // Request that the next LOAD/UNLOAD_DLL_DEBUG_EVENT block the debugger
+  // thread until ContinueAsyncDllEvent() is called. Used by the delegate
+  // from inside OnLoadDll/OnUnloadDll to give the client time to learn
+  // about the new module and plant any pending breakpoints before the
+  // inferior runs past them.
+  void RequestDllEventBlock();
+
 private:
   void FreeProcessHandles();
   void DebugLoop();
@@ -75,6 +88,14 @@ private:
   // A predicate which gets signalled when an exception is finished processing
   // and the debug loop can be continued.
   Predicate<ExceptionResult> m_exception_pred;
+
+  // Predicate that gates LOAD_DLL_DEBUG_EVENT / UNLOAD_DLL_DEBUG_EVENT
+  // delivery on the client's continue. Default value true (no wait). When
+  // the delegate signals it wants to stop on a DLL event so the client can
+  // resolve pending breakpoints against the new module, the DebuggerThread
+  // sets this to false and blocks until ContinueAsyncDllEvent() flips it
+  // back to true.
+  Predicate<bool> m_dll_event_pred{true};
 
   // An event which gets signalled by the debugger thread when it exits the
   // debugger loop and is detached from the inferior.

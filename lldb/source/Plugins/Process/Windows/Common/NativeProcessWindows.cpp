@@ -160,6 +160,12 @@ Status NativeProcessWindows::Resume(const ResumeActionList &resume_actions) {
       m_session_data->m_debugger->ContinueAsyncException(
           ExceptionResult::MaskException);
     }
+    // Release any DLL-event wait the DebuggerThread may be holding. No-op
+    // when we stopped for an exception; pairs with the wait in DebugLoop's
+    // LOAD_DLL_DEBUG_EVENT / UNLOAD_DLL_DEBUG_EVENT handlers and is the
+    // signal that the client has had a chance to plant pending breakpoints
+    // against the just-loaded module.
+    m_session_data->m_debugger->ContinueAsyncDllEvent();
   } else {
     LLDB_LOG(log, "error: process {0} is in state {1}.  Returning...",
              GetDebuggedProcessId(), GetState());
@@ -367,7 +373,8 @@ Status NativeProcessWindows::CacheLoadedModules() {
 
         FileSpec file_spec(path);
         FileSystem::Instance().Resolve(file_spec);
-        m_loaded_modules[file_spec] = (addr_t)me.modBaseAddr;
+        m_loaded_modules.emplace_back(std::move(file_spec),
+                                      (addr_t)me.modBaseAddr);
       } while (Module32Next(snapshot.get(), &me));
     }
 
@@ -475,6 +482,19 @@ void NativeProcessWindows::OnDebuggerConnected(lldb::addr_t image_base) {
       return;
     }
     SetArchitecture(process_info.GetArchitecture());
+  }
+
+  // Seed m_loaded_modules with the main executable. We can't rely on a later
+  // CreateToolhelp32Snapshot to pick it up because that snapshot races with
+  // the loader's PEB updates and intermittently misses dlopen-loaded DLLs
+  // (see OnLoadDll). Subsequent DLL loads come in via the debug event
+  // callbacks (HandleLoadDllEvent → OnLoadDll), so we never need a snapshot
+  // for processes we launch ourselves.
+  ProcessInstanceInfo exe_info;
+  if (Host::GetProcessInfo(GetDebuggedProcessId(), exe_info)) {
+    FileSpec exe = exe_info.GetExecutableFile();
+    FileSystem::Instance().Resolve(exe);
+    m_loaded_modules.emplace_back(std::move(exe), image_base);
   }
 
   // The very first one shall always be the main thread.
@@ -670,13 +690,76 @@ void NativeProcessWindows::OnExitThread(lldb::tid_t thread_id,
 
 void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
                                      lldb::addr_t module_addr) {
-  m_loaded_modules.clear();
+  // Track the just-loaded module so a subsequent GetLoadedLibraries() (called
+  // from the qXfer:libraries:read packet) returns the up-to-date list. We
+  // can't rely on CreateToolhelp32Snapshot here: it walks the inferior's PEB
+  // loader list, but Windows fires LOAD_DLL_DEBUG_EVENT *before* the loader
+  // finishes linking the new module into the PEB. Without this hook, the
+  // client's first libraries query after a dlopen-style load would miss the
+  // new module and its pending BPs wouldn't get resolved.
+  FileSpec fs = module_spec.GetFileSpec();
+  FileSystem::Instance().Resolve(fs);
+  m_loaded_modules.emplace_back(std::move(fs), module_addr);
   m_pending_library_events = true;
+
+  // While we're still in initial-startup mode (haven't yet emitted the
+  // first user-visible stop) the loader breakpoint that's about to fire
+  // will carry the library:1; for free, and stopping here would race
+  // with NativeDelegate setup. Defer.
+  if (!m_initial_stop_seen || m_threads.empty())
+    return;
+
+  // Skip stopping for system DLLs (C:\Windows\...) since they have no user
+  // BPs and the extra T00 just disrupts gdb-remote protocol expectations
+  // (TestLldbGdbServer, TestGdbRemoteExitCode, TestNonStop, etc.). Real
+  // user code lives outside the Windows install dir, so this also lets us
+  // still stop for dlopen-loaded user libs (TestBreakInLoadedDylib,
+  // TestLoadUnload::test_static_init_during_load).
+  {
+    llvm::StringRef path =
+        m_loaded_modules.back().first.GetDirectory().GetStringRef();
+    auto is_windows_system_dir = [](llvm::StringRef p) {
+      return p.starts_with_insensitive("C:\\Windows") ||
+             p.starts_with_insensitive("C:/Windows");
+    };
+    if (is_windows_system_dir(path))
+      return;
+  }
+
+  // Stop the inferior so the client can read libraries:read, resolve any
+  // pending breakpoints against the just-loaded module, and write the int3
+  // bytes before we let the kernel deliver the next event. Without this,
+  // the inferior runs straight through dlopen()-loaded code and exits
+  // before any client-side BP planting can occur
+  // (TestBreakInLoadedDylib, TestLoadUnload::test_static_init_during_load).
+  ThreadStopInfo stop_info;
+  stop_info.reason = StopReason::eStopReasonNone;
+  stop_info.signo = 0;
+  for (uint32_t i = 0; i < m_threads.size(); ++i) {
+    auto t = static_cast<NativeThreadWindows *>(m_threads[i].get());
+    if (t->DoStop().Fail())
+      exit(1);
+  }
+  auto first = static_cast<NativeThreadWindows *>(m_threads[0].get());
+  first->SetStopReason(stop_info, "");
+  SetCurrentThreadID(first->GetID());
+  SetState(eStateStopped, true);
+  m_session_data->m_debugger->RequestDllEventBlock();
 }
 
 void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr) {
-  m_loaded_modules.clear();
+  // Remove just this module from the tracked list. See OnLoadDll for why we
+  // can't fall back to a fresh CreateToolhelp32Snapshot here.
+  llvm::erase_if(m_loaded_modules, [&](const auto &entry) {
+    return entry.second == module_addr;
+  });
   m_pending_library_events = true;
+  // Don't synthesize a stop for unloads: the inferior often unloads DLLs as
+  // part of process teardown, and bouncing a T00 reply before the imminent
+  // W<exit> packet confuses gdb-remote protocol tests (TestLldbGdbServer,
+  // TestNonStop, …) that expect to see the exit packet first. Loads still
+  // stop (see OnLoadDll) because the client needs the chance to plant
+  // pending breakpoints against the just-loaded module before it executes.
 }
 
 llvm::Expected<std::unique_ptr<NativeProcessProtocol>>
