@@ -10,6 +10,9 @@
 #include "ExceptionRecord.h"
 #include "IDebugDelegate.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 #include "lldb/Core/ModuleSpec.h"
 #include "lldb/Host/ProcessLaunchInfo.h"
 #include "lldb/Host/ThreadLauncher.h"
@@ -257,6 +260,16 @@ void DebuggerThread::ContinueAsyncException(ExceptionResult result) {
   m_exception_pred.SetValue(result, eBroadcastAlways);
 }
 
+void DebuggerThread::ContinueAsyncDllEvent() {
+  // Idempotent: only needs to do anything if a DLL event wait is in
+  // progress. The predicate's `true` value means "no wait" / "released".
+  m_dll_event_pred.SetValue(true, eBroadcastAlways);
+}
+
+void DebuggerThread::RequestDllEventBlock() {
+  m_dll_event_pred.SetValue(false, eBroadcastNever);
+}
+
 void DebuggerThread::FreeProcessHandles() {
   m_process = HostProcess();
   m_main_thread = HostThread();
@@ -310,9 +323,16 @@ void DebuggerThread::DebugLoop() {
         break;
       case LOAD_DLL_DEBUG_EVENT:
         continue_status = HandleLoadDllEvent(dbe.u.LoadDll, dbe.dwThreadId);
+        // The delegate may have requested that we block here so the client
+        // can resolve pending breakpoints against the just-loaded module
+        // before the inferior runs past them. If no block was requested,
+        // this returns immediately because m_dll_event_pred is already
+        // true.
+        m_dll_event_pred.WaitForValueEqualTo(true);
         break;
       case UNLOAD_DLL_DEBUG_EVENT:
         continue_status = HandleUnloadDllEvent(dbe.u.UnloadDll, dbe.dwThreadId);
+        m_dll_event_pred.WaitForValueEqualTo(true);
         break;
       case OUTPUT_DEBUG_STRING_EVENT:
         continue_status = HandleODSEvent(dbe.u.DebugString, dbe.dwThreadId);

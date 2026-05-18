@@ -21,23 +21,6 @@ class TestBreakInLoadedDylib(TestBase):
         self.lib_fullname = ctx.getFullLibName(self.lib_shortname)
         self.lib_spec = lldb.SBFileSpec(self.lib_fullname)
 
-    @skipIfRemote
-    @expectedFailureAll(
-        oslist=["windows"],
-        bugnumber=(
-            "On Windows lldb-server, OnLoadDll just sets a "
-            "pending-library-events flag; without an explicit stop on "
-            "LOAD_DLL_DEBUG_EVENT the inferior runs straight through "
-            "dlopen()'d code and exits before the client has a chance "
-            "to resolve the pending breakpoint and plant the int3 byte. "
-            "An attempted fix (RequestDllEventBlock + ContinueAsyncDllEvent "
-            "predicate gating the DebuggerThread loop) successfully "
-            "delivers the stop and the BP byte gets written, but the "
-            "subsequent inferior execution still does not trip the int3 -- "
-            "needs investigation into the loader / Windows page-protection "
-            "interaction with debug writes against just-mapped DLLs."
-        ),
-    )
     def test_break_in_dlopen_dylib_using_lldbutils(self):
         self.common_setup()
         lldbutil.run_to_source_breakpoint(
@@ -50,10 +33,6 @@ class TestBreakInLoadedDylib(TestBase):
         )
 
     @skipIfRemote
-    @expectedFailureAll(
-        oslist=["windows"],
-        bugnumber="See test_break_in_dlopen_dylib_using_lldbutils.",
-    )
     def test_break_in_dlopen_dylib_using_target(self):
         self.common_setup()
 
