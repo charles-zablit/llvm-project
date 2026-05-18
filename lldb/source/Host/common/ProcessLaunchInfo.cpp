@@ -231,19 +231,26 @@ void ProcessLaunchInfo::SetDetachOnError(bool enable) {
 llvm::Error ProcessLaunchInfo::SetUpPtyRedirection() {
   Log *log = GetLog(LLDBLog::Process);
 
-#ifdef _WIN32
-  // Windows PseudoConsole is single-shot: OpenPseudoConsole asserts when
-  // m_mode != Mode::None. A ProcessLaunchInfo reused across launches
-  // (e.g. CommandObjectProcessLaunch's member, whose
-  // OptionParsingStarting calls Clear() but doesn't recreate the PTY)
-  // would otherwise carry a spent PseudoConsole into the next launch.
-  // Always start with a fresh one. Anything that needed the previous
-  // PTY (e.g. ProcessWindows) has captured it via TakePTY() by now.
-  m_pty = std::make_shared<PTY>();
-#else
+  // A `ProcessLaunchInfo` is reused across multiple launches (e.g.
+  // `CommandObjectProcessLaunch`'s member, or
+  // `GDBRemoteCommunicationServerLLGS::m_process_launch_info` across `vRun`
+  // packets in the same session) and the underlying PTY is single-shot:
+  //
+  //   - On POSIX, `posix_openpt` would silently leak `m_primary_fd` if the
+  //     same PTY were reused.
+  //   - On Windows, `PseudoConsole::OpenPseudoConsole` asserts when
+  //     `m_mode != Mode::None`.
+  //
+  // Reset the existing PTY (closing any previously-opened FDs/handles) so
+  // the next Open*() runs against a clean slate. We deliberately do NOT
+  // replace `m_pty` itself: callers (e.g. `ProcessWindows`,
+  // `ProcessLauncherWindows`, `PlatformQemuUser`) hold copies of the
+  // `shared_ptr` and may read it after the launch returns, so the object's
+  // identity has to survive `SetUpPtyRedirection`.
   if (!m_pty)
     m_pty = std::make_shared<PTY>();
-#endif
+  else
+    m_pty->Reset();
 
   bool stdin_free = GetFileActionForFD(STDIN_FILENO) == nullptr;
   bool stdout_free = GetFileActionForFD(STDOUT_FILENO) == nullptr;
@@ -279,10 +286,13 @@ llvm::Error ProcessLaunchInfo::SetUpPtyRedirection() {
 
 #ifdef _WIN32
 llvm::Error ProcessLaunchInfo::SetUpPipeRedirection() {
-  // PseudoConsole is single-shot (OpenAnonymousPipes asserts when
-  // m_mode != Mode::None), so we always need a fresh instance. See
-  // SetUpPtyRedirection for the surrounding rationale.
-  m_pty = std::make_shared<PTY>();
+  // Reset the existing PTY rather than reallocating; see SetUpPtyRedirection
+  // for the rationale. PseudoConsole::OpenAnonymousPipes likewise asserts
+  // when m_mode != Mode::None.
+  if (!m_pty)
+    m_pty = std::make_shared<PTY>();
+  else
+    m_pty->Reset();
   return m_pty->OpenAnonymousPipes();
 }
 #endif
