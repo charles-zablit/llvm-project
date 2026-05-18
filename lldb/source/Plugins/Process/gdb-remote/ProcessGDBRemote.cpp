@@ -826,9 +826,14 @@ Status ProcessGDBRemote::DoLaunch(lldb_private::Module *exe_module,
 
       // Since we can't send argv0 separate from the executable path, we need to
       // make sure to use the actual executable path found in the launch_info...
+      // Pass denormalize=true so the path uses the target's native separators
+      // (no-op on POSIX). On Windows this matters for UNC paths: FileSpec
+      // stores them with forward slashes (e.g. //server/share/foo.exe), and
+      // CreateProcessW won't recognise that as a UNC path — it needs the
+      // backslash prefix \\server\share\foo.exe.
       Args args = launch_info.GetArguments();
       if (FileSpec exe_file = launch_info.GetExecutableFile())
-        args.ReplaceArgumentAtIndex(0, exe_file.GetPath(false));
+        args.ReplaceArgumentAtIndex(0, exe_file.GetPath(/*denormalize=*/true));
       if (llvm::Error err = m_gdb_comm.LaunchProcess(args)) {
         error = Status::FromErrorStringWithFormatv(
             "Cannot launch '{0}': {1}", args.GetArgumentAtIndex(0),
