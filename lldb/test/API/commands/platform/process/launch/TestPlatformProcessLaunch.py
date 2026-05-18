@@ -18,12 +18,7 @@ class ProcessLaunchTestCase(TestBase):
         return (exe, outfile)
 
     def _assert_stdio_log_matches(self, expected, actual):
-        # The lldb-server gdb-remote vRun packet sends the executable path in
-        # FileSpec's normalised form (forward slashes). On Windows the
-        # inferior's argv[0] therefore uses '/', while `exe` here uses '\\'.
-        # CreateProcessW accepts either spelling, so the inferior runs fine
-        # but the strict-equality assertion fails. Normalise both sides.
-        self.assertEqual(expected.replace("\\", "/"), actual.replace("\\", "/"))
+        self.assertEqual(expected, actual)
 
     def test_process_launch_no_args(self):
         # When there are no extra arguments we just have 0, the program name.
