@@ -1,26 +1,34 @@
 """Test that we are able to evaluate expressions when the inferior is blocked in a syscall"""
 
+import os
+import unittest
+
 import lldb
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
 from lldbsuite.test import lldbutil
 
 
+def _windows_lldb_server_xfail(func):
+    """Mark a test as expected to fail when running with lldb-server on Windows.
+
+    lldb-server's expression eval in a syscall-blocked thread redirects the
+    wrong (kernel-mode) thread and the call trampoline AVs. The in-process
+    Windows plugin doesn't hit this because it can pick the
+    DbgUiRemoteBreakin thread from inside the process.
+    """
+    on_windows = lldbplatformutil.getPlatform() == "windows"
+    use_server = os.environ.get("LLDB_USE_LLDB_SERVER", "0") not in (
+        "0", "", "false", "no", "off"
+    )
+    if on_windows and use_server:
+        return unittest.expectedFailure(func)
+    return func
+
+
 class ExprSyscallTestCase(TestBase):
     @expectedFailureNetBSD
-    @expectedFailureAll(
-        oslist=["windows"],
-        bugnumber=(
-            "DebugBreakProcess injects a brand-new DbgUiRemoteBreakin thread "
-            "to deliver the halt; an expression jit'd while the original user "
-            "thread is parked inside a kernel-mode syscall AVs at the call "
-            "site (reading 0xffffffffffffffff) regardless of which thread "
-            "lldb selects. The corresponding fix needs to either kick the "
-            "user thread out of the syscall before redirecting it (Linux's "
-            "tgkill+SIGSTOP route) or run the expression on the freshly "
-            "injected thread with a synthesised user stack."
-        ),
-    )
+    @_windows_lldb_server_xfail
     def test_setpgid(self):
         self.build()
 
