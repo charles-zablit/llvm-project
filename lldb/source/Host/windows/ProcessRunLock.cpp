@@ -13,24 +13,20 @@ static PSRWLOCK GetLock(lldb::rwlock_t lock) {
   return static_cast<PSRWLOCK>(lock);
 }
 
-static bool ReadLock(lldb::rwlock_t rwlock) {
+static void ReadLock(lldb::rwlock_t rwlock) {
   ::AcquireSRWLockShared(GetLock(rwlock));
-  return true;
 }
 
-static bool ReadUnlock(lldb::rwlock_t rwlock) {
+static void ReadUnlock(lldb::rwlock_t rwlock) {
   ::ReleaseSRWLockShared(GetLock(rwlock));
-  return true;
 }
 
-static bool WriteLock(lldb::rwlock_t rwlock) {
+static void WriteLock(lldb::rwlock_t rwlock) {
   ::AcquireSRWLockExclusive(GetLock(rwlock));
-  return true;
 }
 
-static bool WriteUnlock(lldb::rwlock_t rwlock) {
+static void WriteUnlock(lldb::rwlock_t rwlock) {
   ::ReleaseSRWLockExclusive(GetLock(rwlock));
-  return true;
 }
 
 using namespace lldb_private;
@@ -44,13 +40,16 @@ ProcessRunLock::~ProcessRunLock() { delete static_cast<SRWLOCK *>(m_rwlock); }
 
 bool ProcessRunLock::ReadTryLock() {
   ::ReadLock(m_rwlock);
-  if (m_running == false)
+  if (!m_running)
     return true;
   ::ReadUnlock(m_rwlock);
   return false;
 }
 
-bool ProcessRunLock::ReadUnlock() { return ::ReadUnlock(m_rwlock); }
+bool ProcessRunLock::ReadUnlock() {
+  ::ReadUnlock(m_rwlock);
+  return true;
+}
 
 bool ProcessRunLock::SetRunning() {
   WriteLock(m_rwlock);
