@@ -359,7 +359,7 @@ Status NativeProcessWindows::CacheLoadedModules() {
         FileSpec file_spec(path);
         FileSystem::Instance().Resolve(file_spec);
         m_loaded_modules[file_spec] = (addr_t)me.modBaseAddr;
-      } while (Module32Next(snapshot.get(), &me));
+      } while (Module32NextW(snapshot.get(), &me));
     }
 
     if (!m_loaded_modules.empty())
