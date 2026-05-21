@@ -54,7 +54,7 @@ NativeProcessWindows::NativeProcessWindows(ProcessLaunchInfo &launch_info,
           delegate),
       ProcessDebugger(), m_arch(launch_info.GetArchitecture()) {
   ErrorAsOutParameter EOut(&E);
-  DebugDelegateSP delegate_sp(new NativeDebugDelegate(*this));
+  DebugDelegateSP delegate_sp = std::make_shared<NativeDebugDelegate>(*this);
   E = LaunchProcess(launch_info, delegate_sp).ToError();
   if (E)
     return;
@@ -67,7 +67,7 @@ NativeProcessWindows::NativeProcessWindows(lldb::pid_t pid, int terminal_fd,
                                            llvm::Error &E)
     : NativeProcessProtocol(pid, terminal_fd, delegate), ProcessDebugger() {
   ErrorAsOutParameter EOut(&E);
-  DebugDelegateSP delegate_sp(new NativeDebugDelegate(*this));
+  DebugDelegateSP delegate_sp = std::make_shared<NativeDebugDelegate>(*this);
   ProcessAttachInfo attach_info;
   attach_info.SetProcessID(pid);
   E = AttachProcess(pid, attach_info, delegate_sp).ToError();

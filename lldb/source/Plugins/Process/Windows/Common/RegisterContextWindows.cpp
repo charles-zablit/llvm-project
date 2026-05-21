@@ -42,7 +42,7 @@ bool RegisterContextWindows::ReadAllRegisterValues(
   if (!CacheAllRegisterValues())
     return false;
 
-  data_sp.reset(new DataBufferHeap(sizeof(CONTEXT), 0));
+  data_sp = std::make_shared<DataBufferHeap>(sizeof(CONTEXT), 0);
   memcpy(data_sp->GetBytes(), &m_context, sizeof(m_context));
 
   return true;

@@ -209,7 +209,8 @@ Status ProcessWindows::DoDetach(bool keep_stopped) {
 Status ProcessWindows::DoLaunch(Module *exe_module,
                                 ProcessLaunchInfo &launch_info) {
   Status error;
-  DebugDelegateSP delegate(new LocalDebugDelegate(shared_from_this()));
+  DebugDelegateSP delegate =
+      std::make_shared<LocalDebugDelegate>(shared_from_this());
   error = LaunchProcess(launch_info, delegate);
   if (error.Success())
     SetID(launch_info.GetProcessID());
@@ -220,7 +221,8 @@ Status ProcessWindows::DoLaunch(Module *exe_module,
 Status
 ProcessWindows::DoAttachToProcessWithID(lldb::pid_t pid,
                                         const ProcessAttachInfo &attach_info) {
-  DebugDelegateSP delegate(new LocalDebugDelegate(shared_from_this()));
+  DebugDelegateSP delegate =
+      std::make_shared<LocalDebugDelegate>(shared_from_this());
   Status error = AttachProcess(pid, attach_info, delegate);
   if (error.Success())
     SetID(GetDebuggedProcessId());

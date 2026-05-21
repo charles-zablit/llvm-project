@@ -135,8 +135,8 @@ Status ProcessDebugger::LaunchProcess(ProcessLaunchInfo &launch_info,
   }
 
   bool stop_at_entry = launch_info.GetFlags().Test(eLaunchFlagStopAtEntry);
-  m_session_data.reset(new ProcessWindowsData(stop_at_entry));
-  m_session_data->m_debugger.reset(new DebuggerThread(delegate));
+  m_session_data = std::make_unique<ProcessWindowsData>(stop_at_entry);
+  m_session_data->m_debugger = std::make_shared<DebuggerThread>(delegate);
   DebuggerThreadSP debugger = m_session_data->m_debugger;
 
   // Kick off the DebugLaunch asynchronously and wait for it to complete.
@@ -172,9 +172,9 @@ Status ProcessDebugger::AttachProcess(lldb::pid_t pid,
                                       const ProcessAttachInfo &attach_info,
                                       DebugDelegateSP delegate) {
   Log *log = GetLog(WindowsLog::Process);
-  m_session_data.reset(
-      new ProcessWindowsData(!attach_info.GetContinueOnceAttached()));
-  DebuggerThreadSP debugger(new DebuggerThread(delegate));
+  m_session_data = std::make_unique<ProcessWindowsData>(
+      !attach_info.GetContinueOnceAttached());
+  DebuggerThreadSP debugger = std::make_shared<DebuggerThread>(delegate);
 
   m_session_data->m_debugger = debugger;
 

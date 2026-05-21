@@ -404,8 +404,8 @@ DebuggerThread::HandleExceptionEvent(const EXCEPTION_DEBUG_INFO &info,
 
   bool first_chance = (info.dwFirstChance != 0);
 
-  m_active_exception.reset(
-      new ExceptionRecord(info.ExceptionRecord, thread_id));
+  m_active_exception =
+      std::make_shared<ExceptionRecord>(info.ExceptionRecord, thread_id);
   LLDB_LOG(log, "encountered {0} chance exception {1:x} on thread {2:x}",
            first_chance ? "first" : "second",
            info.ExceptionRecord.ExceptionCode, thread_id);
