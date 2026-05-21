@@ -21,7 +21,7 @@ public:
   // Constructors and Destructors
   RegisterContextWindows(Thread &thread, uint32_t concrete_frame_idx);
 
-  virtual ~RegisterContextWindows();
+  ~RegisterContextWindows() override;
 
   // Subclasses must override these functions
   void InvalidateAllRegisters() override;

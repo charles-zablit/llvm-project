@@ -23,7 +23,7 @@ public:
   // Constructors and Destructors
   RegisterContextWindows_x64(Thread &thread, uint32_t concrete_frame_idx);
 
-  virtual ~RegisterContextWindows_x64();
+  ~RegisterContextWindows_x64() override;
 
   // Subclasses must override these functions
   size_t GetRegisterCount() override;

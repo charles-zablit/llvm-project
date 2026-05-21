@@ -22,7 +22,7 @@ class HostThreadWindows : public HostNativeThreadBase {
 public:
   HostThreadWindows();
   HostThreadWindows(lldb::thread_t thread);
-  virtual ~HostThreadWindows();
+  ~HostThreadWindows() override;
 
   void SetOwnsHandle(bool owns);
 

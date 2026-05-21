@@ -24,7 +24,7 @@ class StackFrame;
 class TargetThreadWindows : public lldb_private::Thread {
 public:
   TargetThreadWindows(ProcessWindows &process, const HostThread &thread);
-  virtual ~TargetThreadWindows();
+  ~TargetThreadWindows() override;
 
   // lldb_private::Thread overrides
   void RefreshStateAfterStop() override;
