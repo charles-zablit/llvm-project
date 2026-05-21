@@ -288,7 +288,7 @@ llvm::Expected<size_t> PipeWindows::Read(void *buf, size_t size,
     // The operation probably failed.  However, if it timed out, we need to
     // cancel the I/O. Between the time we returned from WaitForSingleObject
     // and the time we call CancelIoEx, the operation may complete.  If that
-    // hapens, CancelIoEx will fail and return ERROR_NOT_FOUND. If that
+    // happens, CancelIoEx will fail and return ERROR_NOT_FOUND. If that
     // happens, the original operation should be considered to have been
     // successful.
     bool failed = true;
@@ -334,7 +334,7 @@ llvm::Expected<size_t> PipeWindows::Write(const void *buf, size_t size,
     // The operation probably failed.  However, if it timed out, we need to
     // cancel the I/O. Between the time we returned from WaitForSingleObject
     // and the time we call CancelIoEx, the operation may complete.  If that
-    // hapens, CancelIoEx will fail and return ERROR_NOT_FOUND. If that
+    // happens, CancelIoEx will fail and return ERROR_NOT_FOUND. If that
     // happens, the original operation should be considered to have been
     // successful.
     bool failed = true;

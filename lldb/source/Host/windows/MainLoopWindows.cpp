@@ -87,7 +87,7 @@ public:
   }
 
   /// Monitors the handle performing a zero byte read to determine when data is
-  /// avaiable.
+  /// available.
   void Monitor() {
     // Wait until the MainLoop tells us to start.
     WaitForSingleObject(m_ready, INFINITE);

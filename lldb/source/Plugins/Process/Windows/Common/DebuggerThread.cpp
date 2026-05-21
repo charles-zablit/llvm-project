@@ -195,10 +195,10 @@ Status DebuggerThread::StopDebugging(bool terminate) {
       // Initiate the termination before continuing the exception, so that the
       // next debug event we get is the exit process event, and not some other
       // event.
-      BOOL terminate_suceeded = TerminateProcess(handle, 0);
+      BOOL terminate_succeeded = TerminateProcess(handle, 0);
       LLDB_LOG(log,
                "calling TerminateProcess({0}, 0) (inferior={1}), success={2}",
-               handle, pid, terminate_suceeded);
+               handle, pid, terminate_succeeded);
     } else {
       LLDB_LOG(log,
                "NOT calling TerminateProcess because the inferior is not valid "
