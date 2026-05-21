@@ -286,7 +286,12 @@ llvm::Error ConnectToRemote(MainLoop &mainloop,
   if (status.Fail())
     return llvm::createStringErrorV("failed to initialize connection: {0}",
                                     status);
-  llvm::outs() << "Connection established.\n";
+  // Don't print to stdout — when lldb-server is invoked as a child of the
+  // lldb client and stdout/stderr are piped together to FileCheck on
+  // Windows, this message races against the client's own asynchronous
+  // output. Use the host log channel instead; users can re-enable it with
+  // `--log-channels host` or `--log-file`.
+  LLDB_LOG(GetLog(LLDBLog::Host), "lldb-server connection established");
   return llvm::Error::success();
 }
 
@@ -485,8 +490,14 @@ int main_gdbserver(int argc, char *argv[]) {
     }
   }
 
-  // Print version info.
-  printf("%s-%s\n", LLGS_PROGRAM_NAME, LLGS_VERSION_STR);
+  // Print version info to the host log channel rather than stdout. When
+  // lldb-server is invoked as a child of the lldb client and stdout is
+  // piped through FileCheck on Windows, an unsolicited version banner
+  // races against the client's own asynchronous output and breaks
+  // ordering-sensitive tests. Users who want the banner can re-enable it
+  // with `--log-channels host` or `--log-file`.
+  LLDB_LOG(GetLog(LLDBLog::Host), "{0}-{1}", LLGS_PROGRAM_NAME,
+           LLGS_VERSION_STR);
 
   if (llvm::Error err = ConnectToRemote(
           mainloop, gdb_server, reverse_connect, host_and_port, progname,
@@ -506,7 +517,14 @@ int main_gdbserver(int argc, char *argv[]) {
             ret.AsCString());
     return EXIT_FAILURE;
   }
-  fprintf(stderr, "lldb-server exiting...\n");
+  // Don't print to stderr on the success path — when lldb-server is invoked
+  // as a child process by the lldb client and the test pipes stdout+stderr
+  // together (`lldb ... 2>&1 | FileCheck ...`), the message races with the
+  // lldb client's own asynchronous output (e.g. `Process N resuming`) and
+  // the interleaving breaks `CHECK-NEXT` ordering on Windows where the two
+  // processes share a console pipe. Anyone debugging the server lifecycle
+  // can use `lldb-server -g` (gdbserver mode) with `--log-channels host`.
+  LLDB_LOG(GetLog(LLDBLog::Host), "lldb-server exiting cleanly");
 
   return EXIT_SUCCESS;
 }
