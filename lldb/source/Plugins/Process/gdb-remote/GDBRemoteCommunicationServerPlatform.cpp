@@ -449,9 +449,12 @@ Status GDBRemoteCommunicationServerPlatform::LaunchProcess() {
     return error;
   }
 
-  printf("Launched '%s' as process %" PRIu64 "...\n",
-         m_process_launch_info.GetArguments().GetArgumentAtIndex(0),
-         m_process_launch_info.GetProcessID());
+  // See GDBRemoteCommunicationServerLLGS.cpp for why this is logged rather
+  // than printed: avoids racing against the lldb client's piped output on
+  // Windows Shell tests.
+  LLDB_LOG(GetLog(LLDBLog::Platform), "Launched '{0}' as process {1}",
+           m_process_launch_info.GetArguments().GetArgumentAtIndex(0),
+           m_process_launch_info.GetProcessID());
 
   // add to list of spawned processes.  On an lldb-gdbserver, we would expect
   // there to be only one.

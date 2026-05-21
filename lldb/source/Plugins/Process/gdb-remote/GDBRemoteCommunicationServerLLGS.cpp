@@ -346,9 +346,14 @@ Status GDBRemoteCommunicationServerLLGS::LaunchProcess() {
              m_current_process->GetID());
   }
 
-  printf("Launched '%s' as process %" PRIu64 "...\n",
-         m_process_launch_info.GetArguments().GetArgumentAtIndex(0),
-         m_current_process->GetID());
+  // Don't print to stdout — when lldb-server is invoked as a child of the
+  // lldb client and stdout/stderr are piped together to FileCheck on
+  // Windows, this informational message races against the client's own
+  // asynchronous output (e.g. `Process N resuming`) and breaks
+  // ordering-sensitive Shell tests. Use the host log channel instead.
+  LLDB_LOG(GetLog(LLDBLog::Host), "Launched '{0}' as process {1}",
+           m_process_launch_info.GetArguments().GetArgumentAtIndex(0),
+           m_current_process->GetID());
 
   return Status();
 }
@@ -397,7 +402,8 @@ Status GDBRemoteCommunicationServerLLGS::AttachToProcess(lldb::pid_t pid) {
               __FUNCTION__, terminal_fd);
   }
 
-  printf("Attached to process %" PRIu64 "...\n", pid);
+  // See LaunchProcess for why this is logged rather than printed.
+  LLDB_LOG(GetLog(LLDBLog::Host), "Attached to process {0}", pid);
   return Status();
 }
 

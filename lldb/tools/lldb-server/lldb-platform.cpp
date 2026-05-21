@@ -625,7 +625,8 @@ int main_platform(int argc, char *argv[]) {
             main_loop, [progname, gdbserver_port, &inferior_arguments, log_file,
                         log_channels, &main_loop, multi_client,
                         &platform_handles](std::unique_ptr<Socket> sock_up) {
-              printf("Connection established.\n");
+              LLDB_LOG(GetLog(LLDBLog::Platform),
+                       "lldb-server platform connection established");
               Status status = spawn_process(
                   progname, HostInfo::GetProgramFileSpec(), sock_up.get(),
                   gdbserver_port, inferior_arguments, log_file, log_channels,
@@ -660,7 +661,11 @@ int main_platform(int argc, char *argv[]) {
     main_loop.Run();
   }
 
-  fprintf(stderr, "lldb-server exiting...\n");
+  // Don't print to stderr — see lldb-gdbserver.cpp for the rationale
+  // (interleaving with the lldb client's piped output breaks tests on
+  // Windows). Anyone debugging the platform server lifecycle can use
+  // `--log-channels host` or `--log-file`.
+  LLDB_LOG(GetLog(LLDBLog::Platform), "lldb-server exiting cleanly");
 
   return EXIT_SUCCESS;
 }
