@@ -500,8 +500,7 @@ void ProcessWindows::RefreshStateAfterStop() {
       LLDB_LOG(log,
                "No breakpoint site matches for this thread. __debugbreak()?  "
                "Creating stop info with the exception.");
-      // FALLTHROUGH:  We'll treat this as a generic exception record in the
-      // default case.
+      // We'll treat this as a generic exception record in the default case.
       [[fallthrough]];
     }
   }
