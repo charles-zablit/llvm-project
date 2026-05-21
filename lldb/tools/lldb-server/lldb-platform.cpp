@@ -302,7 +302,9 @@ static void client_handle(GDBRemoteCommunicationServerPlatform &platform,
       break;
   }
 
-  printf("Disconnected.\n");
+  // Logged rather than printed — see other prints in this file.
+  LLDB_LOG(GetLog(LLDBLog::Platform),
+           "lldb-server platform connection disconnected");
 }
 
 static Status spawn_process(const char *progname, const FileSpec &prog,
