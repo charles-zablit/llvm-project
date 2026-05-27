@@ -233,8 +233,12 @@ llvm::Error ProcessLaunchInfo::SetUpPtyRedirection() {
 
   if (!m_pty)
     m_pty = std::make_shared<PTY>();
-  else
-    m_pty->Reset();
+  // Don't Reset() here. PlatformQemuUser calls SetUpPtyRedirection a second
+  // time after Target::FinalizeFileActions has already set everything up; on
+  // that path the early-return below fires and we'd otherwise leave the PTY
+  // destroyed but the existing file actions still pointing at its now-invalid
+  // secondary. The Open* functions are idempotent and will Reset() themselves
+  // before reopening.
 
   bool stdin_free = GetFileActionForFD(STDIN_FILENO) == nullptr;
   bool stdout_free = GetFileActionForFD(STDOUT_FILENO) == nullptr;
@@ -272,8 +276,7 @@ llvm::Error ProcessLaunchInfo::SetUpPtyRedirection() {
 llvm::Error ProcessLaunchInfo::SetUpPipeRedirection() {
   if (!m_pty)
     m_pty = std::make_shared<PTY>();
-  else
-    m_pty->Reset();
+  // OpenAnonymousPipes is idempotent — see SetUpPtyRedirection above.
   return m_pty->OpenAnonymousPipes();
 }
 #endif

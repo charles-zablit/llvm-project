@@ -65,6 +65,11 @@ void PseudoTerminal::Reset() {
 }
 
 llvm::Error PseudoTerminal::OpenFirstAvailablePrimary(int oflag) {
+  // Idempotent: close any previously-opened FDs so callers don't have to.
+  // ProcessLaunchInfo reuses the same PseudoTerminal across multiple
+  // launches in the same lldb session, and PlatformQemuUser may also call
+  // SetUpPtyRedirection a second time after Target::FinalizeFileActions.
+  Reset();
 #if LLDB_ENABLE_POSIX
   // Open the primary side of a pseudo terminal
   m_primary_fd = ::posix_openpt(oflag);

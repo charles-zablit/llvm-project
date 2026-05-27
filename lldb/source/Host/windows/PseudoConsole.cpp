@@ -98,16 +98,15 @@ PseudoConsole::~PseudoConsole() {
 }
 
 llvm::Error PseudoConsole::OpenPseudoConsole() {
-  assert(m_mode == Mode::None &&
-         "Attempted to open a PseudoConsole in a different mode than None");
+  // Idempotent: close any previously-opened state so callers don't have to.
+  // ProcessLaunchInfo reuses the same PseudoConsole across multiple
+  // launches in the same lldb session, and PlatformQemuUser may also call
+  // SetUpPtyRedirection a second time after Target::FinalizeFileActions.
+  Reset();
 
   if (!kernel32.IsConPTYAvailable())
     return llvm::make_error<llvm::StringError>("ConPTY is not available",
                                                llvm::errc::io_error);
-
-  assert(m_conpty_handle == INVALID_HANDLE_VALUE &&
-         "ConPTY has already been opened");
-
   // A 4096 bytes buffer should be large enough for the majority of console
   // burst outputs.
   wchar_t pipe_name[MAX_PATH];
@@ -223,8 +222,9 @@ void PseudoConsole::Reset() {
 }
 
 llvm::Error PseudoConsole::OpenAnonymousPipes() {
-  assert(m_mode == Mode::None &&
-         "Attempted to open a AnonymousPipes in a different mode than None");
+  // Idempotent: close any previously-opened state so callers don't have to.
+  // See OpenPseudoConsole for the rationale.
+  Reset();
 
   SECURITY_ATTRIBUTES sa = {sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
   HANDLE hStdinRead = INVALID_HANDLE_VALUE;
