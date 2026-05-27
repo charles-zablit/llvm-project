@@ -69,8 +69,8 @@ llvm::Error PseudoConsole::CreateOverlappedPipePair(HANDLE &out_read,
                                                     HANDLE &out_write,
                                                     bool inheritable) {
   wchar_t pipe_name[MAX_PATH];
-  swprintf(pipe_name, MAX_PATH, L"\\\\.\\pipe\\conpty-lldb-%d-%p",
-           GetCurrentProcessId(), this);
+  swprintf(pipe_name, MAX_PATH, L"\\\\.\\pipe\\conpty-lldb-%d-%p-%llu",
+           GetCurrentProcessId(), this, GetTickCount64());
   out_read =
       CreateNamedPipeW(pipe_name, PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
                        PIPE_TYPE_BYTE | PIPE_WAIT, 1, 4096, 4096, 0, nullptr);
