@@ -144,6 +144,13 @@ public:
   int SetSTDOUT(const FileSpec &file_spec);
   int SetSTDERR(const FileSpec &file_spec);
 
+  // Tell the server the dimensions of the user's stdio terminal window so
+  // it can size the inferior's pseudo-console accordingly. Returns 0 on
+  // success or when the server reports the packet as unsupported (older
+  // / non-Windows servers); negative on transport error; the server's
+  // error byte otherwise. Sending cols == 0 or rows == 0 is a no-op.
+  int SetSTDIOWindowSize(uint16_t cols, uint16_t rows);
+
   /// Sets the disable ASLR flag to \a enable for a process that will
   /// be launched with the 'A' packet.
   ///

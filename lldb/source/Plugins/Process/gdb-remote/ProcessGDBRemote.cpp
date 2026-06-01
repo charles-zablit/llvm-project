@@ -12,6 +12,7 @@
 #include <cstdlib>
 #if LLDB_ENABLE_POSIX
 #include <netinet/in.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -19,6 +20,9 @@
 #include <sys/stat.h>
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
+#endif
+#ifdef _WIN32
+#include "lldb/Host/windows/windows.h"
 #endif
 #include <ctime>
 #include <sys/types.h>
@@ -186,6 +190,42 @@ public:
 };
 
 std::chrono::seconds ResumeTimeout() { return std::chrono::seconds(5); }
+
+// Query the size of the user's stdio terminal so we can pass it to the
+// gdb-remote server (QSetSTDIOWindowSize). The server uses this to size the
+// inferior's PTY/ConPTY so its output isn't wrapped at the platform default.
+//
+// When the client process is not attached to a real terminal — e.g. lldb-dap,
+// batch lit runs, or anything piping stdout — fall back to a very wide
+// virtual size. The Windows ConPTY otherwise defaults to 80 columns and any
+// inferior line longer than that (full paths, env dumps, register tables)
+// gets physically wrapped in the parent-side STDOUT pipe, which breaks tests
+// that read `lines[0]` of the captured output. POSIX servers ignore the
+// packet so the wide fallback is harmless there.
+static std::pair<uint16_t, uint16_t> GetClientTerminalSize() {
+#ifdef _WIN32
+  CONSOLE_SCREEN_BUFFER_INFO csbi{};
+  HANDLE h = ::GetStdHandle(STD_OUTPUT_HANDLE);
+  if (h != INVALID_HANDLE_VALUE && ::GetConsoleScreenBufferInfo(h, &csbi)) {
+    int cols = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+    int rows = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+    if (cols > 0 && rows > 0)
+      return {static_cast<uint16_t>(cols), static_cast<uint16_t>(rows)};
+  }
+#elif LLDB_ENABLE_POSIX
+  struct winsize ws{};
+  if (::ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0 &&
+      ws.ws_row > 0)
+    return {ws.ws_col, ws.ws_row};
+#endif
+  // No real terminal — pick a moderately wide virtual window so ConPTY
+  // doesn't wrap the inferior's lines at column 80, but stay well below
+  // SHORT_MAX so conhost doesn't allocate a huge screen buffer or trip
+  // table/columnar inferior code that introspects the window dimensions.
+  // 256 columns is wide enough for the longest paths (MAX_PATH on
+  // Windows is 260) and any reasonable env-var or backtrace dump.
+  return {256, 50};
+}
 
 } // namespace
 
@@ -812,6 +852,15 @@ Status ProcessGDBRemote::DoLaunch(lldb_private::Module *exe_module,
       m_gdb_comm.SetSTDOUT(stdout_file_spec);
     if (stderr_file_spec)
       m_gdb_comm.SetSTDERR(stderr_file_spec);
+
+    // Tell the server how wide our terminal is so it can size the inferior's
+    // PTY/ConPTY accordingly. Without this hint the Windows lldb-server
+    // creates an 80x25 ConPTY by default, which wraps any inferior line
+    // longer than 80 cols (full paths printed by tests, env dumps, etc.) and
+    // breaks tests that read the first line of stdout. The server ignores
+    // this packet on platforms where it doesn't matter.
+    auto [terminal_cols, terminal_rows] = GetClientTerminalSize();
+    m_gdb_comm.SetSTDIOWindowSize(terminal_cols, terminal_rows);
 
     m_gdb_comm.SetDisableASLR(launch_flags & eLaunchFlagDisableASLR);
     m_gdb_comm.SetDetachOnError(launch_flags & eLaunchFlagDetachOnError);

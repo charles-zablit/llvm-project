@@ -174,6 +174,28 @@ public:
     return m_flags.Test(lldb::eLaunchFlagDetachOnError);
   }
 
+  /// Optional terminal-window dimensions to use when the launcher creates a
+  /// pseudo-terminal for the inferior's stdio. These are propagated from the
+  /// gdb-remote client (via the QSetSTDIOWindowSize packet) when the lldb-server
+  /// path is in use, so the inferior sees the same column width as the user's
+  /// real terminal and long lines aren't wrapped at the platform default.
+  /// Zero means "unset" — the launcher should fall back to its own default
+  /// (e.g. GetConsoleScreenBufferInfo on Windows).
+  struct STDIOWindowSize {
+    uint16_t cols = 0;
+    uint16_t rows = 0;
+    bool IsSet() const { return cols != 0 && rows != 0; }
+  };
+
+  void SetSTDIOWindowSize(uint16_t cols, uint16_t rows) {
+    m_stdio_window_size.cols = cols;
+    m_stdio_window_size.rows = rows;
+  }
+
+  const STDIOWindowSize &GetSTDIOWindowSize() const {
+    return m_stdio_window_size;
+  }
+
 protected:
   FileSpec m_working_dir;
   std::string m_plugin_name;
@@ -186,6 +208,7 @@ protected:
   Host::MonitorChildProcessCallback m_monitor_callback;
   std::string m_event_data; // A string passed to the plugin launch, having no
                             // meaning to the upper levels of lldb.
+  STDIOWindowSize m_stdio_window_size;
 };
 }
 

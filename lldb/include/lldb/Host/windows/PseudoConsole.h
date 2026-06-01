@@ -44,11 +44,15 @@ public:
   /// 80x25. Also sets up the associated STDIN/STDOUT pipes and responds to
   /// the cursor-position query that ConPTY emits at startup.
   ///
+  /// \param req_cols, req_rows Optional client-supplied terminal dimensions.
+  ///   If both are non-zero they are used verbatim; otherwise we try the
+  ///   parent's actual console window size and fall back to 80x25.
+  ///
   /// \return
   ///     An llvm::Error if the ConPTY could not be created, or if ConPTY is
   ///     not available on this version of Windows, llvm::Error::success()
   ///     otherwise.
-  llvm::Error OpenPseudoConsole();
+  llvm::Error OpenPseudoConsole(uint16_t req_cols = 0, uint16_t req_rows = 0);
 
   /// Creates a pair of anonymous pipes to use for stdio instead of a ConPTY.
   ///
