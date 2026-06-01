@@ -286,13 +286,12 @@ Status GDBRemoteCommunicationServerLLGS::LaunchProcess() {
   m_process_launch_info.GetFlags().Set(eLaunchFlagDebug);
 
   if (should_forward_stdio) {
-    // Temporarily relax the following for Windows until we can take advantage
-    // of the recently added pty support. This doesn't really affect the use of
-    // lldb-server on Windows.
-#if !defined(_WIN32)
+    // On Windows we open a ConPTY (PseudoConsole). The platform-specific
+    // NativeProcessProtocol (NativeProcessWindows) takes ownership of the
+    // PseudoConsole and forwards child output through the NewProcessOutput
+    // delegate hook; see `GDBRemoteCommunicationServerLLGS::NewProcessOutput`.
     if (llvm::Error Err = m_process_launch_info.SetUpPtyRedirection())
       return Status::FromError(std::move(Err));
-#endif
   }
 
   {
@@ -1217,6 +1216,20 @@ void GDBRemoteCommunicationServerLLGS::NewSubprocess(
   m_debugged_processes.emplace(
       child_pid,
       DebuggedProcess{std::move(child_process), DebuggedProcess::Flag{}});
+}
+
+void GDBRemoteCommunicationServerLLGS::NewProcessOutput(
+    NativeProcessProtocol *, llvm::StringRef data) {
+  if (data.empty())
+    return;
+  // The reader may be on a background thread (Windows). Copy the bytes and
+  // dispatch SendONotification to the main loop so the send is serialised
+  // with ordinary packet traffic.
+  std::string owned(data);
+  m_mainloop.AddPendingCallback(
+      [this, owned = std::move(owned)](MainLoopBase &) {
+        SendONotification(owned.data(), owned.size());
+      });
 }
 
 void GDBRemoteCommunicationServerLLGS::DataAvailableCallback() {
@@ -2532,12 +2545,21 @@ GDBRemoteCommunicationServerLLGS::Handle_I(StringExtractorGDBRemote &packet) {
     // write directly to stdin *this might block if stdin buffer is full*
     // TODO: enqueue this block in circular buffer and send window size to
     // remote host
-    ConnectionStatus status;
     Status error;
+#if defined(_WIN32)
+    // On Windows the inferior's stdio is owned by the platform-level
+    // NativeProcessWindows (which holds the ConPTY). Route stdin through
+    // the new NativeProcessProtocol::WriteStdin hook rather than
+    // m_stdio_communication, which is unconnected on this platform.
+    if (m_current_process->WriteStdin(tmp, read, error) != read || error.Fail())
+      return SendErrorResponse(0x15);
+#else
+    ConnectionStatus status;
     m_stdio_communication.WriteAll(tmp, read, status, &error);
     if (error.Fail()) {
       return SendErrorResponse(0x15);
     }
+#endif
   }
 
   return SendOKResponse();

@@ -247,6 +247,17 @@ public:
   // Access to inferior stdio
   virtual int GetTerminalFileDescriptor() { return m_terminal_fd; }
 
+  /// Write up to \p len bytes from \p buf to the inferior's stdin. Used on
+  /// Windows where the platform owns a ConPTY for the inferior and stdin
+  /// can't be reached through a regular file descriptor exposed via
+  /// `GetTerminalFileDescriptor`. Default implementation returns 0 to
+  /// indicate the platform does not support direct stdin writes; clients
+  /// should fall back to `m_stdio_communication.WriteAll` on those
+  /// platforms.
+  virtual size_t WriteStdin(const void *buf, size_t len, Status &error) {
+    return 0;
+  }
+
   // Stop id interface
 
   uint32_t GetStopID() const;
@@ -266,6 +277,17 @@ public:
     virtual void
     NewSubprocess(NativeProcessProtocol *parent_process,
                   std::unique_ptr<NativeProcessProtocol> child_process) = 0;
+
+    /// Called by the platform when the inferior writes to stdout/stderr
+    /// through a redirected pseudoconsole that the platform owns.
+    ///
+    /// Used on Windows, where the inferior's stdio is read by a dedicated
+    /// reader thread inside the platform (ConPTY pipes in overlapped mode)
+    /// rather than forwarded through `m_stdio_communication` via the main
+    /// loop. Implementations must be thread-safe: the hook may be invoked
+    /// from a reader thread, not the main loop thread.
+    virtual void NewProcessOutput(NativeProcessProtocol *process,
+                                  llvm::StringRef data) {}
   };
 
   virtual Status GetLoadedModuleFileSpec(const char *module_path,

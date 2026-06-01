@@ -17,11 +17,14 @@
 #include "lldb/Host/ProcessLaunchInfo.h"
 #include "lldb/Host/PseudoTerminal.h"
 #include "lldb/Host/windows/AutoHandle.h"
+#include "lldb/Host/windows/ConnectionConPTYWindows.h"
 #include "lldb/Host/windows/HostThreadWindows.h"
 #include "lldb/Host/windows/ProcessLauncherWindows.h"
+#include "lldb/Host/windows/PseudoConsole.h"
 #include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Utility/State.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Errc.h"
 #include "llvm/Support/Error.h"
@@ -52,7 +55,8 @@ NativeProcessWindows::NativeProcessWindows(ProcessLaunchInfo &launch_info,
           LLDB_INVALID_PROCESS_ID,
           PseudoTerminal::invalid_fd, // TODO: Implement on Windows
           delegate),
-      ProcessDebugger(), m_arch(launch_info.GetArchitecture()) {
+      ProcessDebugger(), m_arch(launch_info.GetArchitecture()),
+      m_stdio_communication("lldb.NativeProcessWindows.stdio") {
   ErrorAsOutParameter EOut(&E);
   DebugDelegateSP delegate_sp(new NativeDebugDelegate(*this));
   E = LaunchProcess(launch_info, delegate_sp).ToError();
@@ -60,12 +64,20 @@ NativeProcessWindows::NativeProcessWindows(ProcessLaunchInfo &launch_info,
     return;
 
   SetID(GetDebuggedProcessId());
+
+  // The launcher reads child-side handles off launch_info, so they must
+  // still be in place across the LaunchProcess call. Once the child is
+  // spawned, take ownership of the parent-side ConPTY HANDLEs so the
+  // reader thread can keep pumping after launch_info is cleared.
+  m_pty = launch_info.TakePTY();
+  StartStdioForwarding();
 }
 
 NativeProcessWindows::NativeProcessWindows(lldb::pid_t pid, int terminal_fd,
                                            NativeDelegate &delegate,
                                            llvm::Error &E)
-    : NativeProcessProtocol(pid, terminal_fd, delegate), ProcessDebugger() {
+    : NativeProcessProtocol(pid, terminal_fd, delegate), ProcessDebugger(),
+      m_stdio_communication("lldb.NativeProcessWindows.stdio") {
   ErrorAsOutParameter EOut(&E);
   DebugDelegateSP delegate_sp(new NativeDebugDelegate(*this));
   ProcessAttachInfo attach_info;
@@ -431,6 +443,10 @@ void NativeProcessWindows::OnExitProcess(uint32_t exit_code) {
   Log *log = GetLog(WindowsLog::Process);
   LLDB_LOG(log, "Process {0} exited with code {1}", GetID(), exit_code);
 
+  // Closing the ConPTY signals EOF on the parent-side STDOUT pipe so the
+  // read thread can exit; tear it down before the inferior is reaped.
+  StopStdioForwarding();
+
   ProcessDebugger::OnExitProcess(exit_code);
 
   // No signal involved.  It is just an exit event.
@@ -686,4 +702,70 @@ NativeProcessWindows::Manager::Attach(
     return std::move(E);
   return std::move(process_up);
 }
+
+NativeProcessWindows::~NativeProcessWindows() { StopStdioForwarding(); }
+
+void NativeProcessWindows::StartStdioForwarding() {
+  if (!m_pty || !m_pty->IsConnected())
+    return;
+  // Mirrors ProcessWindows::SetPseudoConsoleHandle: hand the parent-side
+  // STDOUT HANDLE to a ConnectionConPTY wrapped in a ThreadedCommunication,
+  // and let its read thread drain into the delegate's NewProcessOutput.
+  m_stdio_communication.SetConnection(
+      std::make_unique<ConnectionConPTY>(m_pty));
+  if (!m_stdio_communication.IsConnected())
+    return;
+  m_stdio_communication.SetReadThreadBytesReceivedCallback(
+      &NativeProcessWindows::STDIOReadThreadBytesReceived, this);
+  m_stdio_communication.StartReadThread();
+}
+
+void NativeProcessWindows::StopStdioForwarding() {
+  if (!m_stdio_communication.HasConnection())
+    return;
+
+  // Closing the ConPTY HPCON tells conhost to flush its remaining output to
+  // the parent-side STDOUT pipe and then release its write end. The read
+  // thread will pick up the flushed bytes via its in-flight overlapped
+  // ReadFile (status=Success), then on the next iteration see
+  // IsConnected==false and return EOF, ending the loop. Joining without
+  // calling InterruptRead is intentional: InterruptRead — and
+  // SynchronizeWithReadThread which calls it internally — makes any
+  // pending ReadFile return 0 bytes (eConnectionStatusInterrupted) even if
+  // the pipe has data, which would drop the conhost's final flush.
+  if (m_pty)
+    m_pty->Close();
+
+  if (m_stdio_communication.ReadThreadIsRunning())
+    m_stdio_communication.JoinReadThread();
+
+  if (m_stdio_communication.HasConnection())
+    m_stdio_communication.Disconnect();
+}
+
+void NativeProcessWindows::STDIOReadThreadBytesReceived(void *baton,
+                                                        const void *src,
+                                                        size_t src_len) {
+  auto *self = static_cast<NativeProcessWindows *>(baton);
+  if (src_len == 0)
+    return;
+  self->m_delegate.NewProcessOutput(
+      self, llvm::StringRef(static_cast<const char *>(src), src_len));
+}
+
+size_t NativeProcessWindows::WriteStdin(const void *buf, size_t len,
+                                        Status &error) {
+  if (!m_stdio_communication.HasConnection()) {
+    error = Status::FromErrorString(
+        "no ConPTY connection on this NativeProcessWindows");
+    return 0;
+  }
+  ConnectionStatus status;
+  size_t written = m_stdio_communication.Write(buf, len, status, &error);
+  if (status != eConnectionStatusSuccess && error.Success())
+    error = Status::FromErrorStringWithFormatv(
+        "ConPTY stdin write returned status {0}", static_cast<int>(status));
+  return written;
+}
+
 } // namespace lldb_private
