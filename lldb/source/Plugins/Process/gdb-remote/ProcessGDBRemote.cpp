@@ -227,6 +227,192 @@ static std::pair<uint16_t, uint16_t> GetClientTerminalSize() {
   return {256, 50};
 }
 
+#ifdef _WIN32
+
+// Process IOHandler for gdb-remote stdio forwarding on Windows.
+//
+// On Mac+Linux when a debugserver-style PTY is available the client side
+// gets a real FD and Process::SetSTDIOFileDescriptor sets up the
+// cross-platform IOHandlerProcessSTDIO (Process.cpp) which select()s on
+// the user's stdin and writes to the PTY FD. That pathway:
+//   * suppresses the editline / replxx prompt while it sits on top of
+//     the IOHandler stack, so async `eBroadcastBitSTDOUT` events from
+//     Debugger::DefaultEventHandler don't get inter-mangled with prompt
+//     redraws, and
+//   * routes user keystrokes to the inferior's stdin.
+//
+// With the Windows lldb-server ConPTY path the inferior's stdio reaches
+// the client only via gdb-remote `$O` (out) and `I` (in) packets — no
+// client-side FD exists. Without a process-IO handler the editline
+// prompt stays on top of the stack, so the user sees prompts redrawing
+// over the inferior's output and any keystroke is routed to the lldb
+// command interpreter instead of `std::cin`.
+//
+// This handler mirrors the Process/Windows/Common
+// IOHandlerProcessSTDIOWindows pattern (WaitForMultipleObjects on
+// stdin + an interrupt event, ReadConsoleInput peek on real consoles
+// to avoid blocking on phantom key-up events), but writes via
+// Process::PutSTDIN instead of WriteFile-to-HANDLE — that virtual is
+// already overridden by ProcessGDBRemote::PutSTDIN to send the
+// gdb-remote `I` packet.
+class IOHandlerProcessGDBRemoteSTDIO : public IOHandler {
+public:
+  IOHandlerProcessGDBRemoteSTDIO(Process *process)
+      : IOHandler(process->GetTarget().GetDebugger(),
+                  IOHandler::Type::ProcessIO),
+        m_process(process),
+        m_read_file(GetInputFD(), File::eOpenOptionReadOnly, false),
+        m_interrupt_event(::CreateEventW(nullptr, /*bManualReset=*/FALSE,
+                                         /*bInitialState=*/FALSE,
+                                         nullptr)) {}
+
+  ~IOHandlerProcessGDBRemoteSTDIO() override {
+    if (m_interrupt_event)
+      ::CloseHandle(m_interrupt_event);
+  }
+
+  void SetIsRunning(bool running) {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    SetIsDone(!running);
+    m_is_running = running;
+  }
+
+  // Avoid blocking ReadFile on a console that has only key-up / mouse / focus
+  // events queued. Returns true once a real character is available.
+  llvm::Expected<bool> ConsoleHasTextInput(HANDLE hStdin) {
+    DWORD bytesAvailable = 0;
+    if (::PeekNamedPipe(hStdin, nullptr, 0, nullptr, &bytesAvailable, nullptr) &&
+        bytesAvailable > 0)
+      return true;
+
+    while (true) {
+      INPUT_RECORD rec;
+      DWORD numRead = 0;
+      if (!::PeekConsoleInputW(hStdin, &rec, 1, &numRead))
+        return llvm::createStringError("PeekConsoleInput failed");
+      if (numRead == 0)
+        return false;
+      if (rec.EventType == KEY_EVENT && rec.Event.KeyEvent.bKeyDown &&
+          rec.Event.KeyEvent.uChar.AsciiChar != 0)
+        return true;
+      // Drain the non-text record so the next PeekConsoleInput sees what
+      // comes after it.
+      if (!::ReadConsoleInputW(hStdin, &rec, 1, &numRead))
+        return llvm::createStringError("ReadConsoleInput failed");
+    }
+  }
+
+  void Run() override {
+    if (!m_read_file.IsValid() || !m_interrupt_event) {
+      SetIsDone(true);
+      return;
+    }
+
+    SetIsDone(false);
+    SetIsRunning(true);
+
+    HANDLE hStdin = m_read_file.GetWaitableHandle();
+    HANDLE waitHandles[2] = {hStdin, m_interrupt_event};
+
+    DWORD consoleMode = 0;
+    bool isConsole = ::GetConsoleMode(hStdin, &consoleMode) != 0;
+    DWORD oldConsoleMode = consoleMode;
+    if (isConsole) {
+      // Drop ENABLE_LINE_INPUT so ReadFile returns per-keystroke instead of
+      // per-Enter, and ENABLE_ECHO_INPUT so the user's keystrokes don't echo
+      // twice (once from the local console, once via the inferior's terminal
+      // emulation on the server side).
+      ::SetConsoleMode(hStdin,
+                       consoleMode & ~ENABLE_LINE_INPUT & ~ENABLE_ECHO_INPUT);
+    }
+
+    while (true) {
+      {
+        std::lock_guard<std::mutex> guard(m_mutex);
+        if (GetIsDone())
+          break;
+      }
+
+      DWORD result =
+          ::WaitForMultipleObjects(2, waitHandles, /*bWaitAll=*/FALSE, INFINITE);
+      if (result == WAIT_FAILED)
+        break;
+      if (result == WAIT_OBJECT_0) {
+        if (isConsole) {
+          auto hasInputOrErr = ConsoleHasTextInput(hStdin);
+          if (!hasInputOrErr) {
+            llvm::consumeError(hasInputOrErr.takeError());
+            break;
+          }
+          if (!*hasInputOrErr)
+            continue;
+        }
+        char ch = 0;
+        DWORD nread = 0;
+        if (!::ReadFile(hStdin, &ch, 1, &nread, nullptr) || nread != 1)
+          break;
+        Status err;
+        m_process->PutSTDIN(&ch, 1, err);
+        if (err.Fail())
+          break;
+      } else if (result == WAIT_OBJECT_0 + 1) {
+        ControlOp op = m_pending_op.exchange(eControlOpNone);
+        if (op == eControlOpQuit)
+          break;
+        if (op == eControlOpInterrupt &&
+            StateIsRunningState(m_process->GetState()))
+          m_process->SendAsyncInterrupt();
+      } else {
+        break;
+      }
+    }
+
+    SetIsRunning(false);
+    SetIsDone(true);
+    if (isConsole)
+      ::SetConsoleMode(hStdin, oldConsoleMode);
+  }
+
+  void Cancel() override {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    SetIsDone(true);
+    if (m_is_running) {
+      m_pending_op.store(eControlOpQuit);
+      ::SetEvent(m_interrupt_event);
+    }
+  }
+
+  bool Interrupt() override {
+    if (m_active) {
+      m_pending_op.store(eControlOpInterrupt);
+      return ::SetEvent(m_interrupt_event);
+    }
+    if (StateIsRunningState(m_process->GetState())) {
+      m_process->SendAsyncInterrupt();
+      return true;
+    }
+    return false;
+  }
+
+  void GotEOF() override {}
+
+private:
+  enum ControlOp : char {
+    eControlOpQuit = 'q',
+    eControlOpInterrupt = 'i',
+    eControlOpNone = 0,
+  };
+
+  Process *m_process;
+  NativeFile m_read_file;
+  HANDLE m_interrupt_event = nullptr;
+  std::atomic<ControlOp> m_pending_op{eControlOpNone};
+  std::mutex m_mutex;
+  bool m_is_running = false;
+};
+
+#endif // _WIN32
+
 } // namespace
 
 static PluginProperties &GetGlobalPluginProperties() {
@@ -927,8 +1113,22 @@ Status ProcessGDBRemote::DoLaunch(lldb_private::Module *exe_module,
       SetPrivateState(SetThreadStopInfo(response));
 
       if (!disable_stdio) {
-        if (pty.GetPrimaryFileDescriptor() != PseudoTerminal::invalid_fd)
+        if (pty.GetPrimaryFileDescriptor() != PseudoTerminal::invalid_fd) {
           SetSTDIOFileDescriptor(pty.ReleasePrimaryFileDescriptor());
+        }
+#ifdef _WIN32
+        else if (m_stdin_forward) {
+          // No client-side PTY FD (the lldb-server ConPTY path forwards
+          // stdio over `$O` / `I` packets). Push a process-IO handler that
+          // owns the user's stdin while the inferior runs, so the editline
+          // prompt yields and keystrokes go to PutSTDIN — which is already
+          // overridden in this class to send the gdb-remote `I` packet.
+          std::lock_guard<std::mutex> guard(m_process_input_reader_mutex);
+          if (!m_process_input_reader)
+            m_process_input_reader =
+                std::make_shared<IOHandlerProcessGDBRemoteSTDIO>(this);
+        }
+#endif
       }
     }
   } else {
