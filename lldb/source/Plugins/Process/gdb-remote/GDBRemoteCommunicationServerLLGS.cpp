@@ -1228,14 +1228,39 @@ void GDBRemoteCommunicationServerLLGS::NewProcessOutput(
     NativeProcessProtocol *, llvm::StringRef data) {
   if (data.empty())
     return;
-  // The reader may be on a background thread (Windows). Copy the bytes and
-  // dispatch SendONotification to the main loop so the send is serialised
-  // with ordinary packet traffic.
-  std::string owned(data);
+  // The reader may be on a background thread (Windows). Park the bytes in
+  // a buffer that the main loop drains; sending `$O` packets directly from
+  // here can race with regular request/response traffic and the client
+  // would interpret an `$O` arriving between its request and its expected
+  // response as the response itself.
+  {
+    std::lock_guard<std::mutex> lock(m_pending_output_mutex);
+    m_pending_output_buffer.append(data.begin(), data.end());
+  }
   m_mainloop.AddPendingCallback(
-      [this, owned = std::move(owned)](MainLoopBase &) {
-        SendONotification(owned.data(), owned.size());
-      });
+      [this](MainLoopBase &) { FlushPendingProcessOutput(); });
+}
+
+void GDBRemoteCommunicationServerLLGS::FlushPendingProcessOutput() {
+  // Only emit `$O` when the inferior is actually running — i.e. the client
+  // is parked inside SendContinuePacketAndWaitForResponse, which is the
+  // only path on the client that recognises `$O` as an async stdout
+  // notification rather than a packet response. When the process is
+  // stopped, hold on to the bytes; we'll flush them before the next stop
+  // reply (which is itself part of the continue-reply stream) so the
+  // client picks them up via the same wait loop.
+  if (!m_current_process ||
+      !StateIsRunningState(m_current_process->GetState()))
+    return;
+
+  std::string out;
+  {
+    std::lock_guard<std::mutex> lock(m_pending_output_mutex);
+    if (m_pending_output_buffer.empty())
+      return;
+    out.swap(m_pending_output_buffer);
+  }
+  SendONotification(out.data(), out.size());
 }
 
 void GDBRemoteCommunicationServerLLGS::DataAvailableCallback() {
@@ -2044,6 +2069,23 @@ GDBRemoteCommunicationServerLLGS::SendStopReasonForState(
     NativeProcessProtocol &process, lldb::StateType process_state,
     bool force_synchronous) {
   Log *log = GetLog(LLDBLog::Process);
+
+  // Drain any inferior stdout/stderr that arrived since we last had a
+  // window to emit `$O`. This is the last instant the client is still in
+  // its continue-wait loop and will recognise `$O` as an async stdout
+  // notification rather than a packet response. Doing it here also
+  // matches the bare-Linux flow where each chunk of stdio fires
+  // SendProcessOutput from the main-loop reader before any stop reply
+  // can be assembled.
+  {
+    std::string out;
+    {
+      std::lock_guard<std::mutex> lock(m_pending_output_mutex);
+      out.swap(m_pending_output_buffer);
+    }
+    if (!out.empty())
+      SendONotification(out.data(), out.size());
+  }
 
   if (m_disabling_non_stop) {
     // Check if we are waiting for any more processes to stop.  If we are,

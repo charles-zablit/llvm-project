@@ -96,6 +96,12 @@ public:
   void NewProcessOutput(NativeProcessProtocol *process,
                         llvm::StringRef data) override;
 
+  /// Drain m_pending_output_buffer and emit a `$O` packet if the inferior
+  /// is currently in a running state. No-op otherwise; the bytes stay in
+  /// the buffer until the next opportunity (a resume, or right before the
+  /// next stop reply).
+  void FlushPendingProcessOutput();
+
   Status InitializeConnection(std::unique_ptr<Connection> connection);
 
   GDBRemoteCommunication::PacketResult
@@ -127,6 +133,16 @@ protected:
 
   Communication m_stdio_communication;
   MainLoop::ReadHandleUP m_stdio_handle_up;
+
+  // Buffer for inferior stdout/stderr that arrived from
+  // NativeProcessProtocol::NativeDelegate::NewProcessOutput while no resume
+  // was in flight. Sending bare `$O` packets in that window confuses the
+  // client — it treats them as responses to whatever non-continue request
+  // it has outstanding. We park the bytes here and flush them either
+  // before the next resume reply or right before sending the next stop
+  // reply, where `$O` notifications are part of the protocol contract.
+  std::string m_pending_output_buffer;
+  std::mutex m_pending_output_mutex;
 
   llvm::StringMap<std::unique_ptr<llvm::MemoryBuffer>> m_xfer_buffer_map;
   std::mutex m_saved_registers_mutex;
