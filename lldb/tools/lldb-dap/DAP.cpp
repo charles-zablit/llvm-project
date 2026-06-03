@@ -786,7 +786,56 @@ lldb::SBTarget DAP::CreateTarget(lldb::SBError &error) {
   return target;
 }
 
-void DAP::SetTarget(const lldb::SBTarget target) { this->target = target; }
+void DAP::SetTarget(const lldb::SBTarget target) {
+  this->target = target;
+
+  if (target.IsValid()) {
+    // Configure breakpoint event listeners for the target.
+    lldb::SBListener listener = this->debugger.GetListener();
+    listener.StartListeningForEvents(
+        this->target.GetBroadcaster(),
+        lldb::SBTarget::eBroadcastBitBreakpointChanged |
+            lldb::SBTarget::eBroadcastBitModulesLoaded |
+            lldb::SBTarget::eBroadcastBitModulesUnloaded |
+            lldb::SBTarget::eBroadcastBitSymbolsLoaded |
+            lldb::SBTarget::eBroadcastBitSymbolsChanged |
+            lldb::SBTarget::eBroadcastBitNewTargetCreated);
+    listener.StartListeningForEvents(this->broadcaster,
+                                     eBroadcastBitStopEventThread);
+
+    // Synthesize "module"/new events for any modules already loaded into the
+    // target. The modules-loaded broadcast is set up just above, but for
+    // attach/launch flows that go through user-supplied attachCommands or
+    // launchCommands, the user's `target create ...` and `process launch
+    // --stop-at-entry` (or attach equivalents) finish loading every initial
+    // module BEFORE control returns to lldb-dap and SetTarget can register
+    // the listener -- on Windows this is the entire executable plus the
+    // ntdll/kernel32/etc. avalanche, all of which broadcast into the void.
+    // Tests that synchronously assert on those events
+    // (TestDAP_attachCommands.test_commands::wait_for_module_events,
+    // TestDAP_launch_extra_launch_commands) then time out at 60s because
+    // no further loads happen for trivial inferiors held at entry. Replay
+    // the load events here so the listener side observes the same sequence
+    // it would have seen if SetTarget had run first.
+    const std::scoped_lock<std::mutex> modules_guard(this->modules_mutex);
+    const uint32_t num_modules = this->target.GetNumModules();
+    for (uint32_t i = 0; i < num_modules; ++i) {
+      lldb::SBModule module = this->target.GetModuleAtIndex(i);
+      std::optional<protocol::Module> p_module =
+          CreateModule(this->target, module, /*is_removed=*/false);
+      if (!p_module)
+        continue;
+      llvm::StringRef module_id = p_module->id;
+      if (this->modules.contains(module_id))
+        continue;
+      this->modules.insert(module_id);
+      Send(protocol::Event{
+          "module", protocol::ModuleEventBody{
+                        std::move(p_module).value(),
+                        protocol::ModuleEventBody::eReasonNew}});
+    }
+  }
+}
 
 bool DAP::HandleObject(const Message &M) {
   TelemetryDispatcher dispatcher(&debugger);
