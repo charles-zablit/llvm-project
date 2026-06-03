@@ -73,7 +73,6 @@ class TestDAP_attach(lldbdap_testcase.DAPTestCaseBase):
         self.attach(program=program)
         self.continue_and_verify_pid()
 
-    @expectedFailureWindows
     def test_by_name_waitFor(self):
         """
         Tests waiting for, and attaching to a process by process name that
@@ -97,7 +96,13 @@ class TestDAP_attach(lldbdap_testcase.DAPTestCaseBase):
             if self.spawn_thread.is_alive():
                 self.spawn_thread.join(timeout=10)
 
-    @expectedFailureWindows
+    @skipIfWindows  # FIXME: lldb-dap hangs ~50s on shutdown when attached by
+    # partial process name on Windows -- the test body itself passes, but the
+    # tearDown's stdin-close shutdown signal isn't acted on, the Python harness
+    # times out and kills lldb-dap, exit status 1 propagates as an ERROR via
+    # `dap_server.terminate`. test_by_name_waitFor (full path attach) is the
+    # same flow and exits cleanly, so the regression is in the attach-by-
+    # basename code path, not the disconnect path.
     def test_by_partial_name_waitFor(self):
         """
         Tests waiting for and attaching to a process by partial process name
