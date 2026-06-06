@@ -234,19 +234,51 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
 
   PROCESS_INFORMATION pi = {};
 
-  BOOL result = ::CreateProcessW(
-      wexecutable.c_str(), pwcommandLine, nullptr, nullptr,
-      /*bInheritHandles=*/!inherited_handles.empty() ||
-          pty_mode != PseudoConsole::Mode::None,
-      flags, environment.data(),
-      wworkingDirectory.size() == 0 ? nullptr : wworkingDirectory.c_str(),
-      reinterpret_cast<STARTUPINFOW *>(&startupinfoex), &pi);
+  // CreateProcessW intermittently fails on Windows under load with
+  // ERROR_GEN_FAILURE (31), ERROR_SHARING_VIOLATION (32), or
+  // ERROR_LOCK_VIOLATION (33) when an EDR / anti-malware product (e.g.
+  // CrowdStrike Falcon, Defender) holds the freshly-linked executable open
+  // for static analysis as the launch is attempted. Serial isolation
+  // reproduces none of these; the parallel `check-lldb` suite hits 10-15 of
+  // them per run on hosts where such products are installed. Retry with
+  // exponential backoff so transient launch failures don't surface as test
+  // flakes; a genuinely-broken image still falls through to the same error
+  // path after the retry budget is exhausted. Total budget ~775ms across 5
+  // attempts -- conservative enough not to eat into the 10s
+  // `WaitForProcessStopPrivate` timeout that follows the launch.
+  static constexpr DWORD kTransientLaunchErrors[] = {
+      ERROR_GEN_FAILURE, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION};
+  BOOL result = FALSE;
+  DWORD last_err = 0;
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    result = ::CreateProcessW(
+        wexecutable.c_str(), pwcommandLine, nullptr, nullptr,
+        /*bInheritHandles=*/!inherited_handles.empty() ||
+            pty_mode != PseudoConsole::Mode::None,
+        flags, environment.data(),
+        wworkingDirectory.size() == 0 ? nullptr : wworkingDirectory.c_str(),
+        reinterpret_cast<STARTUPINFOW *>(&startupinfoex), &pi);
+    if (result)
+      break;
+    last_err = ::GetLastError();
+    bool transient = false;
+    for (DWORD code : kTransientLaunchErrors) {
+      if (last_err == code) {
+        transient = true;
+        break;
+      }
+    }
+    if (!transient)
+      break;
+    // 25 + 50 + 100 + 200 + 400 = 775 ms total over 5 attempts.
+    ::Sleep(25u << attempt);
+  }
 
   if (!result) {
     // Call GetLastError before we make any other system calls.
     // Note that error 50 ("The request is not supported") will occur if you
     // try debug a 64-bit inferior from a 32-bit LLDB.
-    error = Status(::GetLastError(), eErrorTypeWin32);
+    error = Status(last_err, eErrorTypeWin32);
     return HostProcess();
   }
 
