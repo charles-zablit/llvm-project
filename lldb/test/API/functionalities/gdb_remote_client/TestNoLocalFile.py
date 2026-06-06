@@ -114,6 +114,13 @@ class TestNoLocalFile(GDBRemoteTestBase):
             process.GetState(), lldb.eStateStopped, "Should be stopped at entry"
         )
         self.assertIsNotNone(self.a_packet_file, "A packet was sent")
+        # The lldb host denormalises the executable's path to native separators
+        # before placing it in the launch (A / vRun) packet -- so on Windows the
+        # `\nosuch_dir\...` form is what lands on the wire even when the remote
+        # platform is macOS. Compare in a host-agnostic way by normalising both
+        # sides to forward slashes.
         self.assertEqual(
-            self.absent_file, self.a_packet_file, "The A packet file was correct"
+            self.absent_file.replace("\\", "/"),
+            self.a_packet_file.replace("\\", "/"),
+            "The A packet file was correct",
         )
