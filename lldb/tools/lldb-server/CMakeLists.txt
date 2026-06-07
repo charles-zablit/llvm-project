@@ -91,6 +91,18 @@ add_dependencies(lldb-server
 target_include_directories(lldb-server PRIVATE "${LLDB_SOURCE_DIR}/source")
 target_link_libraries(lldb-server PRIVATE ${LLDB_SYSTEM_LIBS})
 
+# Aggressive dead-code stripping for lldb-server. The default MSVC build with
+# /DEBUG (which RelWithDebInfo produces and which is required for usable
+# crash dumps + the separate .pdb) implies /INCREMENTAL and silently disables
+# /OPT:REF / /OPT:ICF, so every function from every linked .lib survives into
+# the binary. lldb-server pulls in clang* + many lldbCore/Target/Symbol libs
+# transitively through lldbPluginProcessGDBRemote, but only uses a small
+# fraction of their code at runtime; without these flags the binary balloons
+# to ~80MB on Windows, vs ~10-15MB once the linker GCs the unused functions.
+if(MSVC)
+  target_link_options(lldb-server PRIVATE /INCREMENTAL:NO /OPT:REF /OPT:ICF)
+endif()
+
 if(LLDB_ENABLE_MOCK_ACCELERATOR_PLUGIN)
   target_compile_definitions(lldb-server
     PRIVATE LLDB_ENABLE_MOCK_ACCELERATOR_PLUGIN)
