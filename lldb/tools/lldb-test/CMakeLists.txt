@@ -9,6 +9,7 @@ add_lldb_tool(lldb-test
     Support
   LINK_LIBS
     lldbBreakpoint
+    lldbCommands
     lldbCore
     lldbDataFormatters
     lldbExpression

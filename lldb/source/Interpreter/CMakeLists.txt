@@ -65,7 +65,6 @@ add_lldb_library(lldbInterpreter NO_PLUGIN_DEPENDENCIES
     Support
   LINK_LIBS
     lldbInterpreterInterfaces
-    lldbCommands
     lldbCore
     lldbDataFormatters
     lldbHost

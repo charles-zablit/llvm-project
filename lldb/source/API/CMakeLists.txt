@@ -126,6 +126,7 @@ add_lldb_library(liblldb SHARED ${option_framework}
     Support
   LINK_LIBS
     lldbBreakpoint
+    lldbCommands
     lldbCore
     lldbDataFormatters
     lldbExpression
