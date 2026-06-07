@@ -8,6 +8,27 @@ from lldbsuite.test import lldbutil
 
 class ExprSyscallTestCase(TestBase):
     @expectedFailureNetBSD
+    @skipIf(
+        oslist=["windows"],
+        bugnumber=(
+            "FIXME: passes under the in-process Windows debugger, fails under "
+            "lldb-server. After SendAsyncInterrupt, lldb-server-on-Windows "
+            "halts via DebugBreakProcess, which injects a fresh thread that "
+            "fires int3 in ntdll!DbgUiRemoteBreakin. The original main thread "
+            "is left suspended at the user-mode `ret` of the NtDelayExecution "
+            "stub. When the function-call expression `(int)GetCurrentProcessId()` "
+            "runs on that suspended-mid-syscall thread, the JIT trampoline's "
+            "post-call `mov [rsi], eax` faults at offset 0x2b: RSI is "
+            "clobbered to a non-canonical address by the time the call returns "
+            "(despite Win64 ABI marking RSI as non-volatile). Running the same "
+            "expression on the injected DbgUiRemoteBreakin thread succeeds, so "
+            "the bug is specific to function calls on syscall-suspended "
+            "threads under lldb-server. The test relies on lldb's default "
+            "thread-selection logic picking the syscall thread; on Linux that "
+            "thread cleanly returns from the syscall after SIGSTOP, on Windows "
+            "it doesn't."
+        ),
+    )
     def test_setpgid(self):
         self.build()
 
