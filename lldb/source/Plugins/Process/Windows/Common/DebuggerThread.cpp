@@ -208,6 +208,12 @@ Status DebuggerThread::StopDebugging(bool terminate) {
     ContinueAsyncException(ExceptionResult::MaskException);
   }
 
+  // Likewise, release any DLL-event wait that is parked in
+  // HandleLoadDllEvent / HandleUnloadDllEvent. m_is_shutting_down is now
+  // observable to those handlers, so they will skip the next wait, but we
+  // still need to wake up an existing one.
+  ContinueAsyncDllEvent();
+
   if (!terminate) {
     // Indicate that we want to detach.
     m_pid_to_detach = GetProcess().GetProcessId();
@@ -247,6 +253,39 @@ void DebuggerThread::ContinueAsyncException(ExceptionResult result) {
 
   m_active_exception.reset();
   m_exception_pred.SetValue(result, eBroadcastAlways);
+}
+
+void DebuggerThread::ContinueAsyncDllEvent() {
+  Log *log = GetLog(WindowsLog::Process | WindowsLog::Event);
+  LLDB_LOG(log,
+           "releasing parked DLL event for inferior process {0}.",
+           m_process.GetProcessId());
+
+  // The carried value is irrelevant; the wait checks the signalled state.
+  m_dll_event_pred.SetValue(true, eBroadcastAlways);
+}
+
+void DebuggerThread::WaitForResumeAfterDllEvent() {
+  // Called by the delegate's OnLoadDll / OnUnloadDll on the DebuggerThread
+  // itself, after it has surfaced the load/unload as eStateStopped. Park
+  // until the delegate's Resume() path calls ContinueAsyncDllEvent.
+  Log *log = GetLog(WindowsLog::Process | WindowsLog::Event);
+
+  // Set m_pending_dll_event before reading m_is_shutting_down so that
+  // StopDebugging cannot decide there's nothing to release between our
+  // check and our wait.
+  m_dll_event_pred.SetValue(false, eBroadcastNever);
+  m_pending_dll_event.store(true);
+  if (m_is_shutting_down.load()) {
+    m_pending_dll_event.store(false);
+    return;
+  }
+  LLDB_LOG(log, "parking inferior {0} on DLL event until next resume",
+           m_process.GetProcessId());
+  m_dll_event_pred.WaitForValueEqualTo(true);
+  m_pending_dll_event.store(false);
+  LLDB_LOG(log, "inferior {0} released from DLL event wait",
+           m_process.GetProcessId());
 }
 
 void DebuggerThread::FreeProcessHandles() {
@@ -738,6 +777,7 @@ DebuggerThread::HandleLoadDllEvent(const LOAD_DLL_DEBUG_INFO &info,
   // Windows does not automatically close info.hFile, so we need to do it.
   if (info.hFile != nullptr)
     ::CloseHandle(info.hFile);
+
   return DBG_CONTINUE;
 }
 
@@ -750,6 +790,7 @@ DebuggerThread::HandleUnloadDllEvent(const UNLOAD_DLL_DEBUG_INFO &info,
 
   m_debug_delegate->OnUnloadDll(
       reinterpret_cast<lldb::addr_t>(info.lpBaseOfDll));
+
   return DBG_CONTINUE;
 }
 

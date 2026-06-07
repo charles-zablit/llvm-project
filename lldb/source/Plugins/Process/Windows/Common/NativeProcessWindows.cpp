@@ -157,6 +157,11 @@ Status NativeProcessWindows::Resume(const ResumeActionList &resume_actions) {
       // anything happened.
       m_session_data->m_debugger->ContinueAsyncException(
           ExceptionResult::MaskException);
+    } else if (m_session_data->m_debugger->HasPendingDllEvent()) {
+      // The previous stop was a LOAD_DLL_DEBUG_EVENT or UNLOAD_DLL_DEBUG_EVENT
+      // and HandleLoadDllEvent / HandleUnloadDllEvent is parked waiting for
+      // ContinueAsyncDllEvent before issuing ContinueDebugEvent.
+      m_session_data->m_debugger->ContinueAsyncDllEvent();
     }
   } else {
     LLDB_LOG(log, "error: process {0} is in state {1}.  Returning...",
@@ -480,6 +485,22 @@ void NativeProcessWindows::OnDebuggerConnected(lldb::addr_t image_base) {
     SetArchitecture(process_info.GetArchitecture());
   }
 
+  // Seed the loaded-modules cache with the main executable. CREATE_PROCESS
+  // does not generate a paired LOAD_DLL_DEBUG_EVENT, so without this entry
+  // a qXfer:libraries:read response would omit the main module entirely
+  // and the client would be unable to resolve any breakpoint set against
+  // it before the first library refresh. We pull the executable path from
+  // the inferior's process info; CreateToolhelp32Snapshot won't help yet
+  // because the process is still in early loader init.
+  ProcessInstanceInfo info;
+  if (Host::GetProcessInfo(GetDebuggedProcessId(), info)) {
+    FileSpec exe = info.GetExecutableFile();
+    if (exe) {
+      FileSystem::Instance().Resolve(exe);
+      m_loaded_modules[exe] = image_base;
+    }
+  }
+
   // The very first one shall always be the main thread.
   assert(m_threads.empty());
   m_threads.push_back(std::make_unique<NativeThreadWindows>(
@@ -704,13 +725,89 @@ void NativeProcessWindows::OnExitThread(lldb::tid_t thread_id,
 
 void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
                                      lldb::addr_t module_addr) {
-  m_loaded_modules.clear();
+  Log *log = GetLog(WindowsLog::Process);
+  // Update the loaded-modules cache directly with the just-loaded module,
+  // and *don't* clear the rest of the cache. CreateToolhelp32Snapshot reads
+  // the PEB module list, but LOAD_DLL_DEBUG_EVENT fires before the loader
+  // finishes inserting the new entry, so a snapshot taken right now would
+  // miss the just-loaded DLL. Tracking each load incrementally avoids the
+  // race entirely.
+  if (module_spec.GetFileSpec()) {
+    FileSpec resolved = module_spec.GetFileSpec();
+    FileSystem::Instance().Resolve(resolved);
+    m_loaded_modules[resolved] = module_addr;
+  }
   m_pending_library_events = true;
+
+  // Before we've taken the loader breakpoint we are still inside
+  // ProcessDebugger::WaitForDebuggerConnection. Suspending here would deadlock
+  // launch (the launch path is parked on m_initial_stop_event) and lldb-server
+  // hasn't even been wired up to the gdb-remote layer yet, so there's nobody
+  // to consume the stop. Just record the module-load and let the debugger
+  // thread DBG_CONTINUE through the load.
+  if (!m_initial_stop_seen)
+    return;
+
+  // The DebuggerThread is currently inside HandleLoadDllEvent. Surface the
+  // load as a real stop so that LLGS sends a stop reply with `library:1;`
+  // and the client refreshes its module list and sets pending breakpoints.
+  // Resume() will release the wait below by calling ContinueAsyncDllEvent.
+  if (!m_threads.empty()) {
+    auto first = static_cast<NativeThreadWindows *>(m_threads[0].get());
+    SetCurrentThreadID(first->GetID());
+    if (first->DoStop().Fail())
+      LLDB_LOG(log, "failed to suspend thread {0} on LOAD_DLL", first->GetID());
+    ThreadStopInfo info;
+    info.reason = lldb::eStopReasonNone;
+    // signo=0 means the client (ProcessGDBRemote::SetThreadStopInfo) will
+    // not synthesize a SIGTRAP-style stop info; combined with the
+    // `library:1;` annotation appended by LLGS, the client simply refreshes
+    // its module list, installs any newly-resolvable pending breakpoints,
+    // and silently resumes via Process::ShouldStop.
+    info.signo = 0;
+    first->SetStopReason(info, "");
+  }
+  SetState(eStateStopped, true);
+
+  // Park the DebuggerThread (us) until the next Resume() arrives via the
+  // gdb-remote layer. Without this, the DebuggerThread would immediately
+  // call ContinueDebugEvent and the inferior would tear through the
+  // dlopen()-loaded code before the client has a chance to install
+  // pending breakpoints.
+  m_session_data->m_debugger->WaitForResumeAfterDllEvent();
 }
 
 void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr) {
-  m_loaded_modules.clear();
+  Log *log = GetLog(WindowsLog::Process);
+  // Drop just the unloaded entry rather than wiping the whole cache; see
+  // OnLoadDll for the rationale.
+  for (auto it = m_loaded_modules.begin(); it != m_loaded_modules.end();) {
+    if (it->second == module_addr)
+      it = m_loaded_modules.erase(it);
+    else
+      ++it;
+  }
   m_pending_library_events = true;
+
+  // See OnLoadDll for the rationale; the same constraints apply to early
+  // unloads (e.g. on shutdown).
+  if (!m_initial_stop_seen)
+    return;
+
+  if (!m_threads.empty()) {
+    auto first = static_cast<NativeThreadWindows *>(m_threads[0].get());
+    SetCurrentThreadID(first->GetID());
+    if (first->DoStop().Fail())
+      LLDB_LOG(log, "failed to suspend thread {0} on UNLOAD_DLL",
+               first->GetID());
+    ThreadStopInfo info;
+    info.reason = lldb::eStopReasonNone;
+    // See OnLoadDll: signo=0 keeps this stop silent on the client side.
+    info.signo = 0;
+    first->SetStopReason(info, "");
+  }
+  SetState(eStateStopped, true);
+  m_session_data->m_debugger->WaitForResumeAfterDllEvent();
 }
 
 void NativeProcessWindows::OnDebugString(lldb::addr_t debug_string_addr,

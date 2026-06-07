@@ -42,6 +42,26 @@ public:
 
   void ContinueAsyncException(ExceptionResult result);
 
+  /// Whether HandleLoadDllEvent / HandleUnloadDllEvent is currently parked
+  /// waiting for ContinueAsyncDllEvent. Used by the Resume() path on the
+  /// NativeProcessWindows side to decide whether the next continue should
+  /// release a DLL-event wait (versus continue an exception, or simply do
+  /// nothing).
+  bool HasPendingDllEvent() const { return m_pending_dll_event; }
+
+  /// Block the current (debugger) thread until ContinueAsyncDllEvent is
+  /// invoked, typically from the delegate's OnLoadDll / OnUnloadDll override
+  /// after it has transitioned the process to eStateStopped. The next
+  /// Resume() on the NativeProcessWindows side will release the wait so the
+  /// DebuggerThread can call ContinueDebugEvent. Mirrors the
+  /// HandleExceptionEvent <-> ContinueAsyncException handshake.
+  void WaitForResumeAfterDllEvent();
+
+  /// Release a HandleLoadDllEvent / HandleUnloadDllEvent that is waiting on
+  /// the DLL-event predicate. Mirrors ContinueAsyncException for the
+  /// LOAD_DLL_DEBUG_EVENT / UNLOAD_DLL_DEBUG_EVENT path.
+  void ContinueAsyncDllEvent();
+
 private:
   void FreeProcessHandles();
   void DebugLoop();
@@ -75,6 +95,17 @@ private:
   // A predicate which gets signalled when an exception is finished processing
   // and the debug loop can be continued.
   Predicate<ExceptionResult> m_exception_pred;
+
+  // A predicate which gets signalled when ContinueAsyncDllEvent is called,
+  // unblocking HandleLoadDllEvent / HandleUnloadDllEvent so the debug loop can
+  // call ContinueDebugEvent. The value carried is unused; only the
+  // signalled/cleared state matters.
+  Predicate<bool> m_dll_event_pred;
+
+  // True while a HandleLoadDllEvent / HandleUnloadDllEvent is parked waiting
+  // for m_dll_event_pred. Read by ProcessDebugger / NativeProcessWindows to
+  // decide whether the next Resume() should release a DLL-event wait.
+  std::atomic<bool> m_pending_dll_event{false};
 
   // An event which gets signalled by the debugger thread when it exits the
   // debugger loop and is detached from the inferior.
