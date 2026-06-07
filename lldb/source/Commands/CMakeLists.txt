@@ -59,6 +59,7 @@ add_lldb_library(lldbCommands NO_PLUGIN_DEPENDENCIES
     lldbValueObject
     lldbVersion
   CLANG_LIBS
+    clangDriver
     clangFrontend
     clangSerialization
   )

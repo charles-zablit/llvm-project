@@ -35,7 +35,29 @@
 #include "lldb/Host/windows/PosixApi.h"
 #endif
 
-#include "clang/Driver/Driver.h"
+namespace {
+
+// Inlined from `clang::driver::Driver::getDefaultModuleCachePath` so that
+// lldbCore no longer needs to link against `clangDriver`. That single call was
+// the only reason lldbCore -- and through it lldb-server -- depended on the
+// clang front-end at all, which transitively dragged in
+// clangBasic/clangLex/clangAST/clangSema/clangParse and several more MB of
+// .text into the lldb-server binary.
+bool GetDefaultClangModuleCachePath(llvm::SmallVectorImpl<char> &Result) {
+  if (const char *Str = std::getenv("CLANG_MODULE_CACHE_PATH")) {
+    llvm::Twine Path{Str};
+    Path.toVector(Result);
+    return Path.getSingleStringRef() != "";
+  }
+  if (llvm::sys::path::cache_directory(Result)) {
+    llvm::sys::path::append(Result, "clang");
+    llvm::sys::path::append(Result, "ModuleCache");
+    return true;
+  }
+  return false;
+}
+
+} // namespace
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Threading.h"
@@ -85,7 +107,7 @@ ModuleListProperties::ModuleListProperties() {
                                            [this] { UpdateSymlinkMappings(); });
 
   llvm::SmallString<128> path;
-  if (clang::driver::Driver::getDefaultModuleCachePath(path)) {
+  if (GetDefaultClangModuleCachePath(path)) {
     lldbassert(SetClangModulesCachePath(FileSpec(path)));
   }
 
