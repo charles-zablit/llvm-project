@@ -40,6 +40,7 @@ add_host_subdirectory(common
   common/NativeThreadProtocol.cpp
   common/NativeWatchpointList.cpp
   common/OptionParser.cpp
+  common/PathCompletion.cpp
   common/PipeBase.cpp
   common/ProcessLaunchInfo.cpp
   common/ProcessRunLock.cpp

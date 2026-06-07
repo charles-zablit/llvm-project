@@ -27,6 +27,13 @@
 #include "lldb/lldb-enumerations.h"
 #endif
 
+namespace lldb_private {
+// Defined in lldb/source/Commands/StandardCommands.cpp (lldbCommands).
+void LoadStandardCommands(CommandInterpreter &interpreter);
+// Defined in lldb/source/Commands/CommandCompletions.cpp (lldbCommands).
+void RegisterCommonCompletionDispatcher();
+} // namespace lldb_private
+
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wglobal-constructors"
 #include "llvm/ExecutionEngine/MCJIT.h"
@@ -134,6 +141,13 @@ llvm::Error SystemInitializerFull::Initialize() {
   };
 
   Debugger::Initialize(LoadPlugin);
+
+  // Wire up the lldbCommands -> CommandInterpreter bridge. lldbInterpreter is
+  // intentionally kept ignorant of the concrete CommandObject implementations
+  // so that downstream tools (notably lldb-server) can ship a smaller binary
+  // by skipping lldbCommands entirely. See StandardCommands.cpp.
+  CommandInterpreter::SetStandardCommandsLoader(LoadStandardCommands);
+  RegisterCommonCompletionDispatcher();
 
   return llvm::Error::success();
 }

@@ -28,6 +28,19 @@ public:
       CommandInterpreter &interpreter, uint32_t completion_mask,
       lldb_private::CompletionRequest &request, SearchFilter *searcher);
 
+  /// Register the dispatcher that resolves "common" completion masks
+  /// (eSourceFileCompletion, eModuleCompletion, eBreakpointCompletion, etc.)
+  /// against their CommandCompletions::* leaf implementations. The leaf
+  /// implementations live in lldbCommands; lldbInterpreter only has the
+  /// trampoline above. liblldb's SystemInitializerFull installs the real
+  /// dispatcher; tools like lldb-server that don't link lldbCommands leave it
+  /// null and `InvokeCommonCompletionCallbacks` becomes a no-op.
+  using CommonCompletionDispatcher = bool (*)(
+      CommandInterpreter &interpreter, uint32_t completion_mask,
+      CompletionRequest &request, SearchFilter *searcher);
+  static void
+  SetCommonCompletionDispatcher(CommonCompletionDispatcher dispatcher);
+
   // These are the generic completer functions:
   static void DiskFiles(CommandInterpreter &interpreter,
                         CompletionRequest &request, SearchFilter *searcher);

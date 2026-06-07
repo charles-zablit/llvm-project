@@ -498,6 +498,16 @@ public:
 
   void LoadCommandDictionary();
 
+  /// Register a hook that populates this CommandInterpreter with the standard
+  /// CommandObjects (the bridge between lldbInterpreter, which only knows the
+  /// CommandObject base classes, and lldbCommands, which holds every concrete
+  /// `breakpoint`/`thread`/`expression`/etc. implementation). liblldb installs
+  /// this hook from SystemInitializerFull; tools that link the framework but
+  /// not lldbCommands -- notably lldb-server -- leave the hook null and run
+  /// only the regex commands that lldbInterpreter ships with.
+  using StandardCommandsLoader = void (*)(CommandInterpreter &);
+  static void SetStandardCommandsLoader(StandardCommandsLoader loader);
+
   void Initialize();
 
   void Clear();

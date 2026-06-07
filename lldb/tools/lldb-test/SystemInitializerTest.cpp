@@ -10,12 +10,20 @@
 #include "lldb/Core/Debugger.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Host/Host.h"
+#include "lldb/Interpreter/CommandInterpreter.h"
 #include "lldb/Initialization/SystemInitializerCommon.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
 #include "lldb/Utility/Timer.h"
 #include "llvm/Support/TargetSelect.h"
 
 #include <string>
+
+namespace lldb_private {
+// Defined in lldb/source/Commands/StandardCommands.cpp (lldbCommands).
+void LoadStandardCommands(CommandInterpreter &interpreter);
+// Defined in lldb/source/Commands/CommandCompletions.cpp (lldbCommands).
+void RegisterCommonCompletionDispatcher();
+} // namespace lldb_private
 
 #define LLDB_PLUGIN(p) LLDB_PLUGIN_DECLARE(p)
 #include "Plugins/Plugins.def"
@@ -51,6 +59,11 @@ llvm::Error SystemInitializerTest::Initialize() {
   Debugger::SettingsInitialize();
 
   Debugger::Initialize(nullptr);
+
+  // Wire up the lldbCommands -> CommandInterpreter bridge so that lldb-test
+  // can exercise the full command set. See StandardCommands.cpp.
+  CommandInterpreter::SetStandardCommandsLoader(LoadStandardCommands);
+  RegisterCommonCompletionDispatcher();
 
   return llvm::Error::success();
 }

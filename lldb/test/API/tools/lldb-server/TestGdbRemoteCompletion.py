@@ -29,20 +29,6 @@ class GdbRemoteCompletionTestCase(gdbremote_testcase.GdbRemoteTestCaseBase):
         return str(os.path.join(self.getBuildDir(), target)).encode().hex()
 
     @skipIfRemote
-    @skipIf(
-        oslist=["windows"],
-        bugnumber=(
-            "FIXME: Windows lldb-server.exe drops lldbCommands from its link "
-            "graph (via /FORCE:UNRESOLVED) to keep the binary under 10 MB. The "
-            "qPathComplete handler is the only code path that depends on "
-            "CommandCompletions::DiskFiles/DiskDirectories from that lib; with "
-            "those symbols unresolved at link, the handler crashes when "
-            "invoked. To re-enable, either link lldbCommands back into "
-            "lldb-server (binary grows to ~16 MB), or split the "
-            "disk-completion helpers into a leaf lib that lldb-server can link "
-            "without pulling the full command infrastructure."
-        ),
-    )
     @add_test_categories(["llgs"])
     def test_autocomplete_path(self):
         self.build()
