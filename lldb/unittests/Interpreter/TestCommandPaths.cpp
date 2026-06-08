@@ -23,14 +23,27 @@
 using namespace lldb_private;
 using namespace lldb;
 
+namespace lldb_private {
+// Defined in lldb/source/Commands/StandardCommands.cpp (lldbCommands).
+void LoadStandardCommands(CommandInterpreter &interpreter);
+} // namespace lldb_private
+
 namespace {
 class VerifyUserMultiwordCmdPathTest : public ::testing::Test {
   void SetUp() override {
     FileSystem::Initialize();
     HostInfo::Initialize();
     PlatformMacOSX::Initialize();
+    // ab5c21774b06 decoupled lldbInterpreter from lldbCommands by routing the
+    // standard command dictionary through a hook installed by
+    // SystemInitializerFull. This unit-test binary doesn't use that
+    // initializer, so install the hook directly so VerifyUserMultiwordCmdPath
+    // can find built-in commands like "process".
+    CommandInterpreter::SetStandardCommandsLoader(
+        lldb_private::LoadStandardCommands);
   }
   void TearDown() override {
+    CommandInterpreter::SetStandardCommandsLoader(nullptr);
     PlatformMacOSX::Terminate();
     HostInfo::Terminate();
     FileSystem::Terminate();
