@@ -748,6 +748,17 @@ void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
   if (!m_initial_stop_seen)
     return;
 
+  // Bare gdb-remote test harnesses that never advertise qXfer:libraries:read+
+  // also never consume the unsolicited $T...library:1; reply that LLGS would
+  // emit if we surfaced this DLL load as a stop. They expect the inferior to
+  // run to a $W exit (or another natural stop) without intermediate
+  // library-event notifications. Skip the synchronous-stop handshake when the
+  // client did not negotiate the libraries qXfer feature; the cache update
+  // above (m_loaded_modules / m_pending_library_events) is unconditional, so
+  // real LLDB clients still see consistent module data via qXfer.
+  if (!m_client_supports_libraries_read)
+    return;
+
   // The DebuggerThread is currently inside HandleLoadDllEvent. Surface the
   // load as a real stop so that LLGS sends a stop reply with `library:1;`
   // and the client refreshes its module list and sets pending breakpoints.
@@ -792,6 +803,12 @@ void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr) {
   // See OnLoadDll for the rationale; the same constraints apply to early
   // unloads (e.g. on shutdown).
   if (!m_initial_stop_seen)
+    return;
+
+  // See OnLoadDll: bare gdb-remote test harnesses that did not negotiate
+  // qXfer:libraries:read+ never consume the synchronous DLL-event stop reply,
+  // so skip the handshake for them.
+  if (!m_client_supports_libraries_read)
     return;
 
   if (!m_threads.empty()) {
