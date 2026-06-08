@@ -17,8 +17,11 @@ add_lldb_library(lldbInterpreter NO_PLUGIN_DEPENDENCIES
   CommandHistory.cpp
   CommandInterpreter.cpp
   CommandObject.cpp
+  CommandObjectMultiword.cpp
+  CommandOptionArgumentTable.cpp
   CommandOptionValidators.cpp
   CommandReturnObject.cpp
+  CommonCompletionTrampoline.cpp
   OptionArgParser.cpp
   OptionGroupArchitecture.cpp
   OptionGroupBoolean.cpp

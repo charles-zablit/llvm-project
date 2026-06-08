@@ -27,7 +27,7 @@
 #include "lldb/Host/FileAction.h"
 #include "lldb/Host/Host.h"
 #include "lldb/Host/HostInfo.h"
-#include "lldb/Interpreter/CommandCompletions.h"
+#include "lldb/Host/PathCompletion.h"
 #include "lldb/Target/Platform.h"
 #include "lldb/Target/UnixSignals.h"
 #include "lldb/Utility/GDBRemote.h"
@@ -325,9 +325,9 @@ GDBRemoteCommunicationServerPlatform::Handle_qPathComplete(
   StringList matches;
   StandardTildeExpressionResolver resolver;
   if (only_dir)
-    CommandCompletions::DiskDirectories(path, matches, resolver);
+    path_completion::CompleteDirectories(path, matches, resolver);
   else
-    CommandCompletions::DiskFiles(path, matches, resolver);
+    path_completion::CompleteFiles(path, matches, resolver);
 
   StreamString response;
   response.PutChar('M');

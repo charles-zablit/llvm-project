@@ -91,6 +91,10 @@ add_dependencies(lldb-server
 target_include_directories(lldb-server PRIVATE "${LLDB_SOURCE_DIR}/source")
 target_link_libraries(lldb-server PRIVATE ${LLDB_SYSTEM_LIBS})
 
+if(MSVC)
+  target_link_options(lldb-server PRIVATE /INCREMENTAL:NO /OPT:REF /OPT:ICF)
+endif()
+
 if(LLDB_ENABLE_MOCK_ACCELERATOR_PLUGIN)
   target_compile_definitions(lldb-server
     PRIVATE LLDB_ENABLE_MOCK_ACCELERATOR_PLUGIN)

@@ -19,7 +19,6 @@ add_lldb_library(lldbCommands NO_PLUGIN_DEPENDENCIES
   CommandObjectLog.cpp
   CommandObjectMemory.cpp
   CommandObjectMemoryTag.cpp
-  CommandObjectMultiword.cpp
   CommandObjectPlatform.cpp
   CommandObjectPlugin.cpp
   CommandObjectProcess.cpp
@@ -39,8 +38,8 @@ add_lldb_library(lldbCommands NO_PLUGIN_DEPENDENCIES
   CommandObjectType.cpp
   CommandObjectVersion.cpp
   CommandObjectWatchpoint.cpp
+  StandardCommands.cpp
   CommandObjectWatchpointCommand.cpp
-  CommandOptionArgumentTable.cpp
   CommandOptionsProcessAttach.cpp
   CommandOptionsProcessLaunch.cpp
 

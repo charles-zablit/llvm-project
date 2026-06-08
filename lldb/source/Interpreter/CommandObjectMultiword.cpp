@@ -1,4 +1,4 @@
-//===-- CommandObjectMultiword.cpp ----------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -81,8 +81,9 @@ CommandObjectMultiword::GetSubcommandObject(llvm::StringRef sub_cmd,
 bool CommandObjectMultiword::LoadSubCommand(llvm::StringRef name,
                                             const CommandObjectSP &cmd_obj_sp) {
   if (cmd_obj_sp)
-    lldbassert((&GetCommandInterpreter() == &cmd_obj_sp->GetCommandInterpreter()) &&
-           "tried to add a CommandObject from a different interpreter");
+    lldbassert(
+        (&GetCommandInterpreter() == &cmd_obj_sp->GetCommandInterpreter()) &&
+        "tried to add a CommandObject from a different interpreter");
 
   return m_subcommand_dict.try_emplace(std::string(name), cmd_obj_sp).second;
 }
@@ -91,11 +92,13 @@ llvm::Error CommandObjectMultiword::LoadUserSubcommand(
     llvm::StringRef name, const CommandObjectSP &cmd_obj_sp, bool can_replace) {
   Status result;
   if (cmd_obj_sp)
-    lldbassert((&GetCommandInterpreter() == &cmd_obj_sp->GetCommandInterpreter()) &&
-           "tried to add a CommandObject from a different interpreter");
+    lldbassert(
+        (&GetCommandInterpreter() == &cmd_obj_sp->GetCommandInterpreter()) &&
+        "tried to add a CommandObject from a different interpreter");
   if (!IsUserCommand()) {
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),
-                              "can't add a user subcommand to a builtin container command.");
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "can't add a user subcommand to a builtin container command.");
   }
   // Make sure this a user command if it isn't already:
   cmd_obj_sp->SetIsUserCommand(true);
@@ -119,27 +122,32 @@ llvm::Error CommandObjectMultiword::LoadUserSubcommand(
   return llvm::Error::success();
 }
 
-llvm::Error CommandObjectMultiword::RemoveUserSubcommand(llvm::StringRef cmd_name,
-                                                    bool must_be_multiword) {
+llvm::Error
+CommandObjectMultiword::RemoveUserSubcommand(llvm::StringRef cmd_name,
+                                             bool must_be_multiword) {
   CommandMap::iterator pos;
   std::string str_name(cmd_name);
 
   pos = m_subcommand_dict.find(str_name);
   if (pos == m_subcommand_dict.end()) {
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),"subcommand '%s' not found.",
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "subcommand '%s' not found.",
                                    str_name.c_str());
   }
   if (!(*pos).second->IsUserCommand()) {
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),"subcommand '%s' not a user command.",
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "subcommand '%s' not a user command.",
                                    str_name.c_str());
   }
 
   if (must_be_multiword && !(*pos).second->IsMultiwordObject()) {
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),"subcommand '%s' is not a container command",
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "subcommand '%s' is not a container command",
                                    str_name.c_str());
   }
   if (!must_be_multiword && (*pos).second->IsMultiwordObject()) {
-    return llvm::createStringError(llvm::inconvertibleErrorCode(),"subcommand '%s' is not a user command",
+    return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                   "subcommand '%s' is not a user command",
                                    str_name.c_str());
   }
 
