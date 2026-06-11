@@ -835,6 +835,11 @@ void NativeProcessWindows::OnDebugString(lldb::addr_t debug_string_addr,
   llvm::SmallVector<char, 256> buffer;
   if (llvm::Error err = ProcessDebugger::ReadDebugString(
           debug_string_addr, is_unicode, length_lower_word, buffer)) {
+    // Mirror ProcessWindows::OnDebugString: format the error the same way
+    // LLDB_LOG_ERROR does and surface it on the inferior-output stream so
+    // the gdb-remote client (and any FileCheck-style test piping through
+    // it) can see the failure under `LLDB_USE_LLDB_SERVER=1`. Server-side
+    // log channels do not forward to the client.
     std::string err_str = llvm::toString(std::move(err));
     std::string msg =
         llvm::formatv("Failed to read debug string at {0:x} "
