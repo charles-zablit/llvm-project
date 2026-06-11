@@ -243,14 +243,14 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
   // them per run on hosts where such products are installed. Retry with
   // exponential backoff so transient launch failures don't surface as test
   // flakes; a genuinely-broken image still falls through to the same error
-  // path after the retry budget is exhausted. Total budget ~775ms across 5
+  // path after the retry budget is exhausted. Total budget ~6.4s across 8
   // attempts -- conservative enough not to eat into the 10s
   // `WaitForProcessStopPrivate` timeout that follows the launch.
   static constexpr DWORD kTransientLaunchErrors[] = {
       ERROR_GEN_FAILURE, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION};
   BOOL result = FALSE;
   DWORD last_err = 0;
-  for (int attempt = 0; attempt < 5; ++attempt) {
+  for (int attempt = 0; attempt < 8; ++attempt) {
     result = ::CreateProcessW(
         wexecutable.c_str(), pwcommandLine, nullptr, nullptr,
         /*bInheritHandles=*/!inherited_handles.empty() ||
@@ -270,7 +270,8 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
     }
     if (!transient)
       break;
-    // 25 + 50 + 100 + 200 + 400 = 775 ms total over 5 attempts.
+    // 25 + 50 + 100 + 200 + 400 + 800 + 1600 + 3200 = 6.4 s total over 8
+    // attempts.
     ::Sleep(25u << attempt);
   }
 
