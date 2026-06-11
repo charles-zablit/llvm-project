@@ -11,6 +11,8 @@
 #include "lldb/Host/windows/PseudoConsole.h"
 #include "lldb/Host/windows/WindowsFileAction.h"
 #include "lldb/Host/windows/windows.h"
+#include "lldb/Utility/LLDBLog.h"
+#include "lldb/Utility/Log.h"
 
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ConvertUTF.h"
@@ -248,9 +250,11 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
   // `WaitForProcessStopPrivate` timeout that follows the launch.
   static constexpr DWORD kTransientLaunchErrors[] = {
       ERROR_GEN_FAILURE, ERROR_SHARING_VIOLATION, ERROR_LOCK_VIOLATION};
+  Log *log = GetLog(LLDBLog::Host);
   BOOL result = FALSE;
   DWORD last_err = 0;
-  for (int attempt = 0; attempt < 8; ++attempt) {
+  int attempt = 0;
+  for (; attempt < 8; ++attempt) {
     result = ::CreateProcessW(
         wexecutable.c_str(), pwcommandLine, nullptr, nullptr,
         /*bInheritHandles=*/!inherited_handles.empty() ||
@@ -268,12 +272,32 @@ ProcessLauncherWindows::LaunchProcess(const ProcessLaunchInfo &launch_info,
         break;
       }
     }
-    if (!transient)
+    if (!transient) {
+      LLDB_LOGF(log,
+                "ProcessLauncherWindows: CreateProcessW failed, GLE=%lu "
+                "(non-transient, not retrying)",
+                last_err);
       break;
+    }
     // 25 + 50 + 100 + 200 + 400 + 800 + 1600 + 3200 = 6.4 s total over 8
     // attempts.
-    ::Sleep(25u << attempt);
+    DWORD sleep_ms = 25u << attempt;
+    LLDB_LOGF(log,
+              "ProcessLauncherWindows: CreateProcessW attempt %d failed, "
+              "GLE=%lu (transient, sleeping %lu ms before retry)",
+              attempt, last_err, sleep_ms);
+    ::Sleep(sleep_ms);
   }
+  if (result && attempt > 0)
+    LLDB_LOGF(log,
+              "ProcessLauncherWindows: CreateProcessW succeeded after %d "
+              "retries",
+              attempt);
+  else if (!result)
+    LLDB_LOGF(log,
+              "ProcessLauncherWindows: CreateProcessW exhausted retry budget, "
+              "final GLE=%lu",
+              last_err);
 
   if (!result) {
     // Call GetLastError before we make any other system calls.
