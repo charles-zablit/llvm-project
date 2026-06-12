@@ -724,7 +724,8 @@ void NativeProcessWindows::OnExitThread(lldb::tid_t thread_id,
 }
 
 void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
-                                     lldb::addr_t module_addr) {
+                                     lldb::addr_t module_addr,
+                                     lldb::tid_t thread_id) {
   Log *log = GetLog(WindowsLog::Process);
   // Update the loaded-modules cache directly with the just-loaded module,
   // and *don't* clear the rest of the cache. CreateToolhelp32Snapshot reads
@@ -763,11 +764,28 @@ void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
   // load as a real stop so that LLGS sends a stop reply with `library:1;`
   // and the client refreshes its module list and sets pending breakpoints.
   // Resume() will release the wait below by calling ContinueAsyncDllEvent.
-  if (!m_threads.empty()) {
-    auto first = static_cast<NativeThreadWindows *>(m_threads[0].get());
-    SetCurrentThreadID(first->GetID());
-    if (first->DoStop().Fail())
-      LLDB_LOG(log, "failed to suspend thread {0} on LOAD_DLL", first->GetID());
+  //
+  // Stop the loader thread specifically -- LOAD_DLL_DEBUG_EVENT.dwThreadId
+  // is the thread that ran LdrpLoadDll (whichever thread called LoadLibrary).
+  // For initial-process loader sequence (ntdll/kernel32) that's the main
+  // thread; for runtime LoadLibrary from a worker, it's the worker. Falling
+  // back to m_threads[0] would always pick the main thread, which is wrong
+  // in the worker case.
+  NativeThreadWindows *loader_thread = GetThreadByID(thread_id);
+  if (!loader_thread && !m_threads.empty()) {
+    // Race vs. CREATE_THREAD_DEBUG_EVENT ordering: the kernel can deliver
+    // LOAD_DLL before its paired CREATE_THREAD on attach. Fall back to the
+    // main thread so the handshake still surfaces a stop.
+    LLDB_LOG(log,
+             "LOAD_DLL on unknown tid {0:x}; falling back to main thread",
+             thread_id);
+    loader_thread = static_cast<NativeThreadWindows *>(m_threads[0].get());
+  }
+  if (loader_thread) {
+    SetCurrentThreadID(loader_thread->GetID());
+    if (loader_thread->DoStop().Fail())
+      LLDB_LOG(log, "failed to suspend thread {0} on LOAD_DLL",
+               loader_thread->GetID());
     ThreadStopInfo info;
     info.reason = lldb::eStopReasonNone;
     // signo=0 means the client (ProcessGDBRemote::SetThreadStopInfo) will
@@ -776,7 +794,7 @@ void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
     // its module list, installs any newly-resolvable pending breakpoints,
     // and silently resumes via Process::ShouldStop.
     info.signo = 0;
-    first->SetStopReason(info, "");
+    loader_thread->SetStopReason(info, "");
   }
   SetState(eStateStopped, true);
 
@@ -788,7 +806,8 @@ void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
   m_session_data->m_debugger->WaitForResumeAfterDllEvent();
 }
 
-void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr) {
+void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr,
+                                       lldb::tid_t thread_id) {
   Log *log = GetLog(WindowsLog::Process);
   // Drop just the unloaded entry rather than wiping the whole cache; see
   // OnLoadDll for the rationale.
@@ -811,17 +830,25 @@ void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr) {
   if (!m_client_supports_libraries_read)
     return;
 
-  if (!m_threads.empty()) {
-    auto first = static_cast<NativeThreadWindows *>(m_threads[0].get());
-    SetCurrentThreadID(first->GetID());
-    if (first->DoStop().Fail())
+  // Stop the unloader thread specifically (the one that ran FreeLibrary);
+  // see OnLoadDll for the loader-thread rationale.
+  NativeThreadWindows *unloader_thread = GetThreadByID(thread_id);
+  if (!unloader_thread && !m_threads.empty()) {
+    LLDB_LOG(log,
+             "UNLOAD_DLL on unknown tid {0:x}; falling back to main thread",
+             thread_id);
+    unloader_thread = static_cast<NativeThreadWindows *>(m_threads[0].get());
+  }
+  if (unloader_thread) {
+    SetCurrentThreadID(unloader_thread->GetID());
+    if (unloader_thread->DoStop().Fail())
       LLDB_LOG(log, "failed to suspend thread {0} on UNLOAD_DLL",
-               first->GetID());
+               unloader_thread->GetID());
     ThreadStopInfo info;
     info.reason = lldb::eStopReasonNone;
     // See OnLoadDll: signo=0 keeps this stop silent on the client side.
     info.signo = 0;
-    first->SetStopReason(info, "");
+    unloader_thread->SetStopReason(info, "");
   }
   SetState(eStateStopped, true);
   m_session_data->m_debugger->WaitForResumeAfterDllEvent();
