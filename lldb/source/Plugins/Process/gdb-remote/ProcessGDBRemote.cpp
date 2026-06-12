@@ -5529,9 +5529,19 @@ void ProcessGDBRemote::AddRemoteRegisters(
                     remote_reg_info.invalidate_regs.begin(), proc_to_lldb);
   }
 
-  // Don't use Process::GetABI, this code gets called from DidAttach, and
-  // in that context we haven't set the Target's architecture yet, so the
-  // ABI is also potentially incorrect.
+  // Stamp the Target architecture from the qHostInfo / qProcessInfo-derived
+  // arch_to_use here if it isn't already set. This codepath is reached from
+  // DidAttach via DidLaunchOrAttach -> BuildDynamicRegisterInfo, BEFORE
+  // DidLaunchOrAttach gets to its own SetArchitecture(...) calls; without
+  // this, ABI plugins that key off the Target arch (e.g. ABIX86 picking
+  // between i386 and amd64 base-register maps in AugmentRegisterInfo) see an
+  // empty ArchSpec on `process attach -p PID` and silently skip the
+  // augmentation. DidLaunchOrAttach later re-applies the same arch (it
+  // computes from the same qHostInfo/qProcessInfo source), so this is
+  // idempotent.
+  if (!GetTarget().GetArchitecture().IsValid() && arch_to_use.IsValid())
+    GetTarget().SetArchitecture(arch_to_use);
+
   if (ABISP abi_sp = ABI::FindPlugin(shared_from_this(), arch_to_use))
     abi_sp->AugmentRegisterInfo(registers);
 

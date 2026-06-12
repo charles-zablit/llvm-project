@@ -205,22 +205,15 @@ void ABIX86::AugmentRegisterInfo(
   if (!process_sp)
     return;
 
-  // Determine the GPR base size. Prefer the Target's architecture, but fall
-  // back to this ABI plugin instance's own type when the Target arch isn't
-  // set yet -- ProcessGDBRemote::AddRemoteRegisters calls us during
-  // DidAttach (see the "Don't use Process::GetABI" comment at that call
-  // site), and on Windows `process attach -p PID` reaches that path with a
-  // Target whose ArchSpec is still empty. The ABI plugin was already chosen
-  // for the right arch by ABI::FindPlugin (CreateInstance gates on
-  // Triple::x86 / Triple::x86_64), so Is64Bit() is authoritative.
+  // Determine the GPR base size from the Target's architecture. The Target
+  // arch is now reliably set by ProcessGDBRemote::AddRemoteRegisters before
+  // calling us, so this path no longer needs the prior fallback for the
+  // process-attach window.
   uint32_t gpr_base_size =
       process_sp->GetTarget().GetArchitecture().GetAddressByteSize();
-  bool is64bit = gpr_base_size == 8 || (gpr_base_size == 0 && Is64Bit());
-  if (gpr_base_size == 0)
-    gpr_base_size = is64bit ? 8 : 4;
 
   // primary map from a base register to its subregisters
-  BaseRegToRegsMap base_reg_map = makeBaseRegMap(is64bit);
+  BaseRegToRegsMap base_reg_map = makeBaseRegMap(gpr_base_size == 8);
   // set used for fast matching of register names to subregisters
   llvm::SmallDenseSet<llvm::StringRef, 64> subreg_name_set;
   // convenience array providing access to all subregisters of given kind,
