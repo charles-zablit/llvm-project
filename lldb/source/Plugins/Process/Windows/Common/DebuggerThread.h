@@ -49,12 +49,19 @@ public:
   /// nothing).
   bool HasPendingDllEvent() const { return m_pending_dll_event; }
 
+  /// Mark a DLL-event wait as pending so a Resume that arrives between the
+  /// SetState(eStateStopped) broadcast and WaitForResumeAfterDllEvent does
+  /// not race past the predicate. Must be called BEFORE SetState; the wait
+  /// itself happens in WaitForResumeAfterDllEvent.
+  void ArmDllEventWait();
+
   /// Block the current (debugger) thread until ContinueAsyncDllEvent is
   /// invoked, typically from the delegate's OnLoadDll / OnUnloadDll override
   /// after it has transitioned the process to eStateStopped. The next
   /// Resume() on the NativeProcessWindows side will release the wait so the
   /// DebuggerThread can call ContinueDebugEvent. Mirrors the
   /// HandleExceptionEvent <-> ContinueAsyncException handshake.
+  /// ArmDllEventWait must have been called first.
   void WaitForResumeAfterDllEvent();
 
   /// Release a HandleLoadDllEvent / HandleUnloadDllEvent that is waiting on

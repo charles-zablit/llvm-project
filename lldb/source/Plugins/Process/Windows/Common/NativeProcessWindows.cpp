@@ -475,14 +475,16 @@ void NativeProcessWindows::OnDebuggerConnected(lldb::addr_t image_base) {
   if (GetID() == LLDB_INVALID_PROCESS_ID)
     SetID(GetDebuggedProcessId());
 
+  ProcessInstanceInfo info;
+  bool got_info = Host::GetProcessInfo(GetDebuggedProcessId(), info);
+
   if (GetArchitecture().GetMachine() == llvm::Triple::UnknownArch) {
-    ProcessInstanceInfo process_info;
-    if (!Host::GetProcessInfo(GetDebuggedProcessId(), process_info)) {
+    if (!got_info) {
       LLDB_LOG(log, "Cannot get process information during debugger connecting "
                     "to process");
       return;
     }
-    SetArchitecture(process_info.GetArchitecture());
+    SetArchitecture(info.GetArchitecture());
   }
 
   // Seed the loaded-modules cache with the main executable. CREATE_PROCESS
@@ -492,8 +494,7 @@ void NativeProcessWindows::OnDebuggerConnected(lldb::addr_t image_base) {
   // it before the first library refresh. We pull the executable path from
   // the inferior's process info; CreateToolhelp32Snapshot won't help yet
   // because the process is still in early loader init.
-  ProcessInstanceInfo info;
-  if (Host::GetProcessInfo(GetDebuggedProcessId(), info)) {
+  if (got_info) {
     FileSpec exe = info.GetExecutableFile();
     if (exe) {
       FileSystem::Instance().Resolve(exe);
@@ -796,6 +797,9 @@ void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
     info.signo = 0;
     loader_thread->SetStopReason(info, "");
   }
+  // Arm the predicate before broadcasting the stop so a Resume that runs
+  // in the gap between SetState and the wait below cannot slip past us.
+  m_session_data->m_debugger->ArmDllEventWait();
   SetState(eStateStopped, true);
 
   // Park the DebuggerThread (us) until the next Resume() arrives via the
@@ -850,6 +854,9 @@ void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr,
     info.signo = 0;
     unloader_thread->SetStopReason(info, "");
   }
+  // Arm the predicate before broadcasting the stop so a Resume that runs
+  // in the gap between SetState and the wait below cannot slip past us.
+  m_session_data->m_debugger->ArmDllEventWait();
   SetState(eStateStopped, true);
   m_session_data->m_debugger->WaitForResumeAfterDllEvent();
 }

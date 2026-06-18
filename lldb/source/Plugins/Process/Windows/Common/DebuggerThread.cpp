@@ -265,17 +265,21 @@ void DebuggerThread::ContinueAsyncDllEvent() {
   m_dll_event_pred.SetValue(true, eBroadcastAlways);
 }
 
+void DebuggerThread::ArmDllEventWait() {
+  // Reset the predicate and mark the wait as pending BEFORE the caller
+  // broadcasts eStateStopped. A Resume that arrives in the gap between
+  // SetState and WaitForResumeAfterDllEvent will see m_pending_dll_event
+  // set and call ContinueAsyncDllEvent so the wait below returns.
+  m_dll_event_pred.SetValue(false, eBroadcastNever);
+  m_pending_dll_event.store(true);
+}
+
 void DebuggerThread::WaitForResumeAfterDllEvent() {
   // Called by the delegate's OnLoadDll / OnUnloadDll on the DebuggerThread
   // itself, after it has surfaced the load/unload as eStateStopped. Park
   // until the delegate's Resume() path calls ContinueAsyncDllEvent.
   Log *log = GetLog(WindowsLog::Process | WindowsLog::Event);
 
-  // Set m_pending_dll_event before reading m_is_shutting_down so that
-  // StopDebugging cannot decide there's nothing to release between our
-  // check and our wait.
-  m_dll_event_pred.SetValue(false, eBroadcastNever);
-  m_pending_dll_event.store(true);
   if (m_is_shutting_down.load()) {
     m_pending_dll_event.store(false);
     return;
