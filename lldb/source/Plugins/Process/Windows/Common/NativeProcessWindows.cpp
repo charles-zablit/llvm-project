@@ -50,6 +50,59 @@ using namespace llvm;
 
 namespace lldb_private {
 
+namespace {
+
+/// Whether \a spec lives under the OS's system directory tree (e.g.
+/// `C:\Windows\System32\*`, `C:\Windows\SysWOW64\*`, `C:\Windows\WinSxS\*`).
+/// Such DLLs are loaded by the runtime and the loader on every process and
+/// can never carry user breakpoints, so the synchronous DLL-event stop is
+/// pure overhead for them. Skipping it avoids an N-roundtrip storm during
+/// CRT init/shutdown when dozens of system DLLs cascade in.
+bool IsSystemDLL(const FileSpec &spec) {
+  if (!spec)
+    return false;
+
+  static const std::vector<std::string> system_prefixes = []() {
+    std::vector<std::string> prefixes;
+    auto add_dir = [&](UINT (*query)(LPWSTR, UINT)) {
+      wchar_t buf[MAX_PATH];
+      UINT len = query(buf, MAX_PATH);
+      if (len == 0 || len >= MAX_PATH)
+        return;
+      std::string utf8;
+      llvm::convertWideToUTF8(std::wstring_view(buf, len), utf8);
+      // Normalize to lowercase + backslash + trailing separator so a simple
+      // prefix match against an equally-normalized path is correct.
+      for (char &c : utf8) {
+        if (c == '/')
+          c = '\\';
+        else
+          c = std::tolower(static_cast<unsigned char>(c));
+      }
+      if (!utf8.empty() && utf8.back() != '\\')
+        utf8 += '\\';
+      prefixes.push_back(std::move(utf8));
+    };
+    add_dir(::GetSystemDirectoryW);  // C:\Windows\System32
+    add_dir(::GetWindowsDirectoryW); // C:\Windows
+    return prefixes;
+  }();
+
+  std::string path = spec.GetPath();
+  for (char &c : path) {
+    if (c == '/')
+      c = '\\';
+    else
+      c = std::tolower(static_cast<unsigned char>(c));
+  }
+  for (const std::string &prefix : system_prefixes)
+    if (llvm::StringRef(path).starts_with(prefix))
+      return true;
+  return false;
+}
+
+} // namespace
+
 NativeProcessWindows::NativeProcessWindows(ProcessLaunchInfo &launch_info,
                                            NativeDelegate &delegate,
                                            llvm::Error &E)
@@ -761,6 +814,14 @@ void NativeProcessWindows::OnLoadDll(const ModuleSpec &module_spec,
   if (!m_client_supports_libraries_read)
     return;
 
+  // System DLLs (kernel32, ntdll, vcruntime, ucrtbase, ...) cascade in by the
+  // dozen during CRT init and shutdown; user breakpoints never resolve into
+  // them, so the round-trip handshake is pure overhead. Skip the sync stop
+  // and let the load proceed silently. The cache update above keeps
+  // qXfer:libraries:read accurate.
+  if (IsSystemDLL(module_spec.GetFileSpec()))
+    return;
+
   // The DebuggerThread is currently inside HandleLoadDllEvent. Surface the
   // load as a real stop so that LLGS sends a stop reply with `library:1;`
   // and the client refreshes its module list and sets pending breakpoints.
@@ -814,12 +875,16 @@ void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr,
                                        lldb::tid_t thread_id) {
   Log *log = GetLog(WindowsLog::Process);
   // Drop just the unloaded entry rather than wiping the whole cache; see
-  // OnLoadDll for the rationale.
+  // OnLoadDll for the rationale. Capture the FileSpec before erasing so we
+  // can decide whether to fire the synchronous stop below.
+  FileSpec unloaded_spec;
   for (auto it = m_loaded_modules.begin(); it != m_loaded_modules.end();) {
-    if (it->second == module_addr)
+    if (it->second == module_addr) {
+      unloaded_spec = it->first;
       it = m_loaded_modules.erase(it);
-    else
+    } else {
       ++it;
+    }
   }
   m_pending_library_events = true;
 
@@ -832,6 +897,11 @@ void NativeProcessWindows::OnUnloadDll(lldb::addr_t module_addr,
   // qXfer:libraries:read+ never consume the synchronous DLL-event stop reply,
   // so skip the handshake for them.
   if (!m_client_supports_libraries_read)
+    return;
+
+  // Same system-DLL filter as OnLoadDll: user code never has breakpoints in
+  // them, and CRT shutdown unloads dozens of them in sequence.
+  if (IsSystemDLL(unloaded_spec))
     return;
 
   // Stop the unloader thread specifically (the one that ran FreeLibrary);
