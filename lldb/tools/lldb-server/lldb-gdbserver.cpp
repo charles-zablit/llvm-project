@@ -16,6 +16,10 @@
 #include <unistd.h>
 #endif
 
+#ifdef _WIN32
+#include "lldb/Host/windows/windows.h"
+#endif
+
 #include "LLDBServerUtilities.h"
 #include "Plugins/Process/gdb-remote/GDBRemoteCommunicationServerLLGS.h"
 #include "Plugins/Process/gdb-remote/ProcessGDBRemoteLog.h"
@@ -428,6 +432,20 @@ int main_gdbserver(int argc, char *argv[]) {
       return EXIT_FAILURE;
     }
     unnamed_pipe = (pipe_t)Arg;
+#ifdef _WIN32
+    // Prevent the inferior we later launch from inheriting this pipe's write
+    // handle. lldb-server writes the listening socket id to this pipe and then
+    // closes its handle; the parent process that spawned us reads the pipe
+    // until EOF purely as a synchronization point ("the server is now
+    // listening"). On Windows the inferior is launched with bInheritHandles =
+    // TRUE (it needs the ConPTY handles), so without this it would also inherit
+    // the pipe's write end. The pipe would then never reach EOF after we close
+    // our handle, the parent's read would block until its timeout, and the
+    // client's connection handshake would time out before the parent could
+    // service it. Clearing the inherit flag keeps the handle valid for our own
+    // use while ensuring the inferior does not keep the write end open.
+    ::SetHandleInformation((HANDLE)unnamed_pipe, HANDLE_FLAG_INHERIT, 0);
+#endif
   }
   if (Args.hasArg(OPT_fd)) {
     int64_t fd;
