@@ -19,6 +19,7 @@
 #include "lldb/Host/Host.h"
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Host/PosixApi.h"
+#include "lldb/Host/Socket.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/Target.h"
 #include "lldb/Utility/FileSpec.h"
@@ -226,13 +227,29 @@ Status PlatformRemoteGDBServer::ConnectRemote(Args &args) {
   if (!url)
     return Status::FromErrorString("URL is null.");
 
-  std::optional<URI> parsed_url = URI::Parse(url);
-  if (!parsed_url)
-    return Status::FromErrorStringWithFormat("Invalid URL: %s", url);
+  llvm::StringRef scheme = llvm::StringRef(url).split("://").first;
+  std::optional<Socket::ProtocolModePair> protocol_and_mode =
+      Socket::GetProtocolAndMode(scheme);
+  if (protocol_and_mode &&
+      (protocol_and_mode->first == Socket::ProtocolUnixDomain ||
+       protocol_and_mode->first == Socket::ProtocolUnixAbstract)) {
+    // Unix-domain connect URLs have the form "<scheme>://<path>". The part
+    // after "://" is a filesystem path -- which on Windows may contain a drive
+    // letter and backslashes -- not a host:port authority, so it can't go
+    // through URI::Parse. The connection layer (ConnectionFileDescriptor)
+    // re-splits the scheme itself, so here we only record the scheme and leave
+    // the hostname empty (as URI::Parse would for a POSIX "unix://" path).
+    m_platform_scheme = scheme.str();
+    m_platform_hostname = "";
+  } else {
+    std::optional<URI> parsed_url = URI::Parse(url);
+    if (!parsed_url)
+      return Status::FromErrorStringWithFormat("Invalid URL: %s", url);
 
-  // We're going to reuse the hostname when we connect to the debugserver.
-  m_platform_scheme = parsed_url->scheme.str();
-  m_platform_hostname = parsed_url->hostname.str();
+    // We're going to reuse the hostname when we connect to the debugserver.
+    m_platform_scheme = parsed_url->scheme.str();
+    m_platform_hostname = parsed_url->hostname.str();
+  }
 
   auto client_up =
       std::make_unique<process_gdb_remote::GDBRemoteCommunicationClient>();
