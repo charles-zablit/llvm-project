@@ -291,6 +291,12 @@ llvm::Expected<size_t> PipeWindows::Read(void *buf, size_t size,
     return bytes_read;
 
   DWORD failure_error = ::GetLastError();
+  // A closed write end is end-of-file, not an error. POSIX read() returns 0
+  // in this case; mirror that so cross-platform callers (e.g. the lldb-server
+  // gdbserver/platform pipe-synchronization in
+  // GDBRemoteCommunication::StartDebugserverProcess) can detect EOF uniformly.
+  if (failure_error == ERROR_BROKEN_PIPE || failure_error == ERROR_HANDLE_EOF)
+    return static_cast<size_t>(0);
   if (failure_error != ERROR_IO_PENDING)
     return Status(failure_error, eErrorTypeWin32).takeError();
 
@@ -319,8 +325,14 @@ llvm::Expected<size_t> PipeWindows::Read(void *buf, size_t size,
 
   // Now we call GetOverlappedResult setting bWait to false, since we've
   // already waited as long as we're willing to.
-  if (!::GetOverlappedResult(m_read, &m_read_overlapped, &bytes_read, FALSE))
-    return Status(::GetLastError(), eErrorTypeWin32).takeError();
+  if (!::GetOverlappedResult(m_read, &m_read_overlapped, &bytes_read, FALSE)) {
+    DWORD overlapped_error = ::GetLastError();
+    // See above: a closed write end is end-of-file, not an error.
+    if (overlapped_error == ERROR_BROKEN_PIPE ||
+        overlapped_error == ERROR_HANDLE_EOF)
+      return static_cast<size_t>(0);
+    return Status(overlapped_error, eErrorTypeWin32).takeError();
+  }
 
   return bytes_read;
 }
