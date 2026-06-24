@@ -2041,7 +2041,12 @@ int GDBRemoteCommunicationClient::SetSTDERR(const FileSpec &file_spec) {
 
 int GDBRemoteCommunicationClient::SetSTDIOWindowSize(uint16_t cols,
                                                      uint16_t rows) {
-  if (cols == 0 || rows == 0)
+  // A 0x0 size is a meaningful request, not a missing one: it tells the server
+  // there is no client terminal, so it should pick an alternative stdio backend
+  // (anonymous pipes instead of a ConPTY on Windows) and avoid wrapping the
+  // inferior's output to an arbitrary default width. Forward it. Only a mixed
+  // 0/non-0 pair is malformed -- the server rejects that -- so don't send it.
+  if ((cols == 0) != (rows == 0))
     return -1;
   StreamString packet;
   packet.Printf("QSetSTDIOWindowSize:cols=%u;rows=%u",
