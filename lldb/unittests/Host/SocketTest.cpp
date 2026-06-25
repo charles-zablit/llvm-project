@@ -93,6 +93,11 @@ TEST_F(SocketTest, CreatePair) {
     functional_protocols.push_back(Socket::ProtocolUnixDomain);
     functional_protocols.push_back(Socket::ProtocolUnixAbstract);
   }
+#elif defined(_WIN32)
+  // Windows supports AF_UNIX domain sockets (Windows 10 1803+) but not the
+  // Linux abstract-namespace variant.
+  if (HostSupportsDomainSockets())
+    functional_protocols.push_back(Socket::ProtocolUnixDomain);
 #endif
 
   for (auto p : functional_protocols) {
@@ -111,7 +116,7 @@ TEST_F(SocketTest, CreatePair) {
 
   std::vector<Socket::SocketProtocol> erroring_protocols = {
 #if !LLDB_ENABLE_POSIX
-      Socket::ProtocolUnixDomain,
+      // Windows has AF_UNIX domain sockets but no abstract-namespace sockets.
       Socket::ProtocolUnixAbstract,
 #endif
   };
@@ -121,7 +126,7 @@ TEST_F(SocketTest, CreatePair) {
   }
 }
 
-#if LLDB_ENABLE_POSIX
+#if LLDB_ENABLE_POSIX || defined(_WIN32)
 TEST_F(SocketTest, DomainListenConnectAccept) {
   if (!HostSupportsDomainSockets())
     GTEST_SKIP() << "Domain sockets unavailable";
@@ -372,6 +377,11 @@ TEST_P(SocketTest, UDPGetConnectURI) {
   EXPECT_EQ((URI{"udp", "127.0.0.1", 0, "/"}), URI::Parse(uri));
 }
 
+// GetRemoteConnectionURI returns a "unix-connect://<path>" URI. This test
+// validates it by round-tripping through URI::Parse, which does not accept a
+// Windows drive-letter/backslash path, so it is POSIX-only. (lldb's own
+// connection layer splits the scheme off with "://" rather than URI::Parse,
+// so domain sockets still work on Windows.)
 #if LLDB_ENABLE_POSIX
 TEST_F(SocketTest, DomainGetConnectURI) {
   if (!HostSupportsDomainSockets())
@@ -397,7 +407,9 @@ TEST_F(SocketTest, DomainGetConnectURI) {
 
   EXPECT_EQ(socket_b_up->GetRemoteConnectionURI(), "");
 }
+#endif
 
+#if LLDB_ENABLE_POSIX || defined(_WIN32)
 TEST_F(SocketTest, DomainSocketFromBoundNativeSocket) {
   if (!HostSupportsDomainSockets())
     GTEST_SKIP() << "Domain sockets unavailable";
