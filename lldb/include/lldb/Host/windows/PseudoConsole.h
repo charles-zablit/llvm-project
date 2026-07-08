@@ -24,7 +24,7 @@ namespace lldb_private {
 class PseudoConsole {
 
 public:
-  enum class Mode { ConPTY, Pipe, None };
+  enum class Mode { ConPTY, Pipe, ClientPipe, None };
 
   PseudoConsole() = default;
   ~PseudoConsole();
@@ -57,6 +57,21 @@ public:
   /// \return
   ///     An llvm::Error if the pipes could not be created.
   llvm::Error OpenAnonymousPipes();
+
+  /// Creates three named pipes owned by THIS (client/lldb) process for
+  /// forwarding a local inferior's stdio without a ConPTY. The inferior is
+  /// launched by a local lldb-server, whose launcher opens the returned paths
+  /// by name -- mirroring how the POSIX path hands lldb-server a pty secondary
+  /// name. Because the client holds the parent-side handles and writes stdin /
+  /// reads stdout+stderr directly, stdin never travels as a gdb-remote `I`
+  /// packet and so never has to interrupt (DebugBreakProcess) the running
+  /// inferior.
+  ///
+  /// On success the Get*PipePath() accessors return the names to send via
+  /// QSetSTDIN/QSetSTDOUT/QSetSTDERR, and GetSTDINHandle()/GetSTDOUTHandle()/
+  /// GetSTDERRHandle() return the parent-side handles (stdin is write-only,
+  /// stdout/stderr are read-only and overlapped).
+  llvm::Error OpenClientStdioPipes();
 
   /// Closes the ConPTY and invalidates its handle, without closing the STDIN
   /// and STDOUT pipes. Closing the ConPTY signals EOF to any process currently
@@ -111,6 +126,15 @@ public:
   /// The child-side stdout/stderr write HANDLE (pipe mode only).
   HANDLE GetChildStdoutHandle() const { return m_pipe_child_stdout; };
 
+  /// The parent-side stderr read HANDLE (client named-pipe mode only).
+  HANDLE GetSTDERRHandle() const { return m_client_stderr; };
+
+  /// Named-pipe paths for the client stdio pipes (client named-pipe mode only),
+  /// to be sent to lldb-server via QSetSTDIN/QSetSTDOUT/QSetSTDERR.
+  const std::string &GetStdinPipePath() const { return m_stdin_pipe_path; }
+  const std::string &GetStdoutPipePath() const { return m_stdout_pipe_path; }
+  const std::string &GetStderrPipePath() const { return m_stderr_pipe_path; }
+
   Mode GetMode() const { return m_mode; };
 
   /// Returns a reference to the mutex used to synchronize access to the
@@ -142,6 +166,14 @@ protected:
       reinterpret_cast<HANDLE>(static_cast<intptr_t>(-1));
   HANDLE m_pipe_child_stdout =
       reinterpret_cast<HANDLE>(static_cast<intptr_t>(-1));
+  // ClientPipe mode: parent-side stderr read end. (stdin write end reuses
+  // m_conpty_input; stdout read end reuses m_conpty_output.)
+  HANDLE m_client_stderr =
+      reinterpret_cast<HANDLE>(static_cast<intptr_t>(-1));
+  // ClientPipe mode: named-pipe paths lldb-server opens for the inferior.
+  std::string m_stdin_pipe_path;
+  std::string m_stdout_pipe_path;
+  std::string m_stderr_pipe_path;
   Mode m_mode = Mode::None;
   std::mutex m_mutex{};
   std::condition_variable m_cv{};

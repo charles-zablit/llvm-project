@@ -297,10 +297,20 @@ bool GDBRemoteClientBase::ShouldStop(const UnixSignals &signals,
   ReadPacket(extra_stop_reply_packet, milliseconds(100), false);
 
   // Interrupting is typically done using SIGSTOP or SIGINT, so if the process
-  // stops with some other signal, we definitely want to stop.
+  // stops with some other signal, we usually want to stop. The exception is a
+  // signal whose default disposition is "do not stop" (e.g. SIGCONT): such a
+  // signal can never be a genuine user-visible stop, so if it shows up as the
+  // response to our own interrupt it is only an artifact of how the stub
+  // delivers that interrupt (for example, Windows lldb-server reports its
+  // DebugBreakProcess halt with a signal number that some tables map to
+  // SIGCONT). Treat that as our interrupt and continue, rather than surfacing a
+  // spurious "stopped and restarted". Unknown signals are treated
+  // conservatively as stop-worthy.
   const uint8_t signo = response.GetHexU8(UINT8_MAX);
+  const bool is_known_signal = !signals.GetSignalAsStringRef(signo).empty();
   if (signo != signals.GetSignalNumberFromName("SIGSTOP") &&
-      signo != signals.GetSignalNumberFromName("SIGINT"))
+      signo != signals.GetSignalNumberFromName("SIGINT") &&
+      (!is_known_signal || signals.GetShouldStop(signo)))
     return true;
 
   // We probably only stopped to perform some async processing, so continue

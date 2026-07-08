@@ -22,6 +22,7 @@
 #include <sys/sysctl.h>
 #endif
 #ifdef _WIN32
+#include "lldb/Host/windows/ConnectionGenericFileWindows.h"
 #include "lldb/Host/windows/windows.h"
 #endif
 #include <ctime>
@@ -318,7 +319,13 @@ ProcessGDBRemote::ProcessGDBRemote(lldb::TargetSP target_sp,
       m_thread_create_bp_sp(), m_waiting_for_attach(false), m_command_sp(),
       m_breakpoint_pc_offset(0), m_initial_tid(LLDB_INVALID_THREAD_ID),
       m_allow_flash_writes(false), m_erased_flash_ranges(),
-      m_vfork_in_progress_count(0) {
+      m_vfork_in_progress_count(0)
+#if defined(_WIN32)
+      ,
+      m_client_stderr_communication(
+          "lldb.process.gdb-remote.client-stderr")
+#endif
+{
   m_async_broadcaster.SetEventName(eBroadcastBitAsyncThreadShouldExit,
                                    "async thread should exit");
   m_async_broadcaster.SetEventName(eBroadcastBitAsyncContinue,
@@ -805,6 +812,32 @@ Status ProcessGDBRemote::DoLaunch(lldb_private::Module *exe_module,
       // a pseudo terminal to instead of relying on the 'O' packets for stdio
       // since 'O' packets can really slow down debugging if the inferior
       // does a lot of output.
+#if defined(_WIN32)
+      // Windows has no Unix pty. Instead the client creates named pipes for the
+      // inferior's stdio and hands lldb-server their paths (below, via
+      // SetSTDIN/OUT/ERR). lldb-server's launcher opens them by name for the
+      // inferior, so all three file actions become non-null and the server
+      // stops forwarding stdio over gdb-remote (see
+      // GDBRemoteCommunicationServerLLGS's should_forward_stdio gate). The
+      // client then writes stdin / reads stdout+stderr directly on the pipes,
+      // so stdin never has to interrupt the running inferior.
+      if (!stdin_file_spec && !stdout_file_spec && !stderr_file_spec) {
+        auto client_pty = std::make_shared<PseudoConsole>();
+        if (llvm::Error err = client_pty->OpenClientStdioPipes()) {
+          LLDB_LOG_ERROR(GetLog(GDBRLog::Process), std::move(err),
+                         "failed to open client stdio pipes, falling back to "
+                         "the interrupting stdin path: {0}");
+        } else {
+          m_client_stdio_pty = client_pty;
+          stdin_file_spec.SetFile(client_pty->GetStdinPipePath(),
+                                  FileSpec::Style::native);
+          stdout_file_spec.SetFile(client_pty->GetStdoutPipePath(),
+                                   FileSpec::Style::native);
+          stderr_file_spec.SetFile(client_pty->GetStderrPipePath(),
+                                   FileSpec::Style::native);
+        }
+      }
+#else
       if ((!stdin_file_spec || !stdout_file_spec || !stderr_file_spec) &&
           !errorToBool(pty.OpenFirstAvailablePrimary(O_RDWR | O_NOCTTY))) {
         FileSpec secondary_name(pty.GetSecondaryName());
@@ -818,6 +851,7 @@ Status ProcessGDBRemote::DoLaunch(lldb_private::Module *exe_module,
         if (!stderr_file_spec)
           stderr_file_spec = secondary_name;
       }
+#endif
       LLDB_LOGF(
           log,
           "ProcessGDBRemote::%s adjusted STDIO paths for local platform "
@@ -926,8 +960,15 @@ Status ProcessGDBRemote::DoLaunch(lldb_private::Module *exe_module,
           SetSTDIOFileDescriptor(pty.ReleasePrimaryFileDescriptor());
         }
 #ifdef _WIN32
-        else if (m_stdin_forward) {
-          // No client-side PTY FD on Windows.
+        else if (m_client_stdio_pty && m_client_stdio_pty->IsConnected()) {
+          // Local Windows: stdio flows over client-owned named pipes. By now
+          // lldb-server has launched the inferior (we've seen its stop reply),
+          // so the inferior has already opened the pipe client ends -- wire up
+          // our read threads and console input reader.
+          SetPseudoConsoleHandle();
+        } else if (m_stdin_forward) {
+          // No client-side stdio pipes (e.g. remote debugging): fall back to
+          // the interrupting `I`-packet path via IOHandlerProcessSTDIOWindows.
           std::lock_guard<std::mutex> guard(m_process_input_reader_mutex);
           if (!m_process_input_reader)
             m_process_input_reader =
@@ -1314,6 +1355,23 @@ ProcessGDBRemote::TraceGetBinaryData(const TraceGetBinaryDataRequest &request) {
 }
 
 void ProcessGDBRemote::DidExit() {
+#if defined(_WIN32)
+  // Tear down the client-owned stdio pipes in the right order: flush and stop
+  // the reader threads first, then close the pipe handles. (Members are also
+  // declared pty-before-stderr-comm so destructor order is safe if we get here
+  // via a path that skips this.)
+  // NOTE(verify-on-windows): if trailing inferior output is ever dropped here,
+  // port ProcessWindows::DrainProcessStdout()'s PeekNamedPipe drain loop.
+  if (m_client_stdio_pty) {
+    m_stdio_communication.SynchronizeWithReadThread();
+    m_stdio_communication.InterruptRead();
+    m_stdio_communication.StopReadThread();
+    m_client_stderr_communication.SynchronizeWithReadThread();
+    m_client_stderr_communication.InterruptRead();
+    m_client_stderr_communication.StopReadThread();
+    m_client_stdio_pty->Reset();
+  }
+#endif
   // When we exit, disconnect from the GDB server communications
   m_gdb_comm.Disconnect();
 }
@@ -3420,6 +3478,22 @@ Status ProcessGDBRemote::DoDeallocateMemory(lldb::addr_t addr) {
 // Process STDIO
 size_t ProcessGDBRemote::PutSTDIN(const char *src, size_t src_len,
                                   Status &error) {
+#if defined(_WIN32)
+  // Local Windows: write straight to the client-owned stdin pipe. This reaches
+  // the inferior without a gdb-remote `I` packet, so it never interrupts the
+  // running process. (m_stdio_communication below is the stdout *read* channel
+  // on this path, so it must not be used for writing.)
+  if (m_client_stdio_pty && m_client_stdio_pty->IsConnected()) {
+    HANDLE stdin_handle = m_client_stdio_pty->GetSTDINHandle();
+    DWORD written = 0;
+    if (!::WriteFile(stdin_handle, src, static_cast<DWORD>(src_len), &written,
+                     nullptr)) {
+      error = Status(::GetLastError(), lldb::eErrorTypeWin32);
+      return written;
+    }
+    return written;
+  }
+#endif
   if (m_stdio_communication.IsConnected()) {
     ConnectionStatus status;
     m_stdio_communication.WriteAll(src, src_len, status, nullptr);
@@ -3428,6 +3502,49 @@ size_t ProcessGDBRemote::PutSTDIN(const char *src, size_t src_len,
   }
   return 0;
 }
+
+#if defined(_WIN32)
+void ProcessGDBRemote::SetPseudoConsoleHandle() {
+  if (!m_client_stdio_pty || !m_client_stdio_pty->IsConnected())
+    return;
+
+  // This has two callers on the local-launch path: DoLaunch() (above) and
+  // PlatformWindows::DebugProcess() right after Process::Launch() returns. Wire
+  // up only once. Re-running SetConnection() would call StopReadThread() on the
+  // live read threads, and StopReadThread() Joins without interrupting the
+  // in-flight overlapped ConnectionGenericFile::Read, so it would block for the
+  // full 5s ThreadedCommunication read timeout on each pipe (~10s stall at
+  // launch). ProcessWindows avoids this by only wiring up from PlatformWindows.
+  if (m_stdio_communication.IsConnected())
+    return;
+
+  // stdout read thread -> process output.
+  m_stdio_communication.SetConnection(std::make_unique<ConnectionGenericFile>(
+      m_client_stdio_pty->GetSTDOUTHandle(), /*owns_descriptor=*/false));
+  if (m_stdio_communication.IsConnected()) {
+    m_stdio_communication.SetReadThreadBytesReceivedCallback(
+        STDIOReadThreadBytesReceived, this);
+    m_stdio_communication.StartReadThread();
+  }
+
+  // stderr read thread. Routed through the same callback so it merges into the
+  // process output, matching a POSIX pty (which has no stdout/stderr split).
+  m_client_stderr_communication.SetConnection(
+      std::make_unique<ConnectionGenericFile>(
+          m_client_stdio_pty->GetSTDERRHandle(), /*owns_descriptor=*/false));
+  if (m_client_stderr_communication.IsConnected()) {
+    m_client_stderr_communication.SetReadThreadBytesReceivedCallback(
+        STDIOReadThreadBytesReceived, this);
+    m_client_stderr_communication.StartReadThread();
+  }
+
+  // Input reader: reads lldb's console and calls PutSTDIN(), which now writes
+  // straight to the stdin pipe (see above) instead of sending `I` packets.
+  std::lock_guard<std::mutex> guard(m_process_input_reader_mutex);
+  if (!m_process_input_reader)
+    m_process_input_reader = std::make_shared<IOHandlerProcessSTDIOWindows>(this);
+}
+#endif
 
 /// Enable a single breakpoint site by trying Z0 (software), then Z1
 /// (hardware), then manual memory write as a last resort.

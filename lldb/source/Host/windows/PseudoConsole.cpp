@@ -14,6 +14,7 @@
 #include "lldb/Host/windows/windows.h"
 #include "lldb/Utility/LLDBLog.h"
 
+#include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Errc.h"
 
 using namespace lldb_private;
@@ -175,7 +176,7 @@ llvm::Error PseudoConsole::OpenPseudoConsole(uint16_t req_cols,
 }
 
 bool PseudoConsole::IsConnected() const {
-  if (m_mode == Mode::Pipe)
+  if (m_mode == Mode::Pipe || m_mode == Mode::ClientPipe)
     return m_conpty_input != INVALID_HANDLE_VALUE &&
            m_conpty_output != INVALID_HANDLE_VALUE;
   return m_conpty_handle != INVALID_HANDLE_VALUE &&
@@ -188,8 +189,11 @@ void PseudoConsole::Close() {
   std::unique_lock<std::mutex> guard(m_mutex);
   if (m_conpty_handle != INVALID_HANDLE_VALUE)
     kernel32.ClosePseudoConsole(m_conpty_handle);
-  if (m_mode == Mode::Pipe && m_conpty_output != INVALID_HANDLE_VALUE)
+  if ((m_mode == Mode::Pipe || m_mode == Mode::ClientPipe) &&
+      m_conpty_output != INVALID_HANDLE_VALUE)
     CancelIoEx(m_conpty_output, nullptr);
+  if (m_mode == Mode::ClientPipe && m_client_stderr != INVALID_HANDLE_VALUE)
+    CancelIoEx(m_client_stderr, nullptr);
   m_conpty_handle = INVALID_HANDLE_VALUE;
   SetStopping(false);
   m_cv.notify_all();
@@ -200,9 +204,12 @@ void PseudoConsole::ClosePseudoConsolePipes() {
     CloseHandle(m_conpty_input);
   if (m_conpty_output != INVALID_HANDLE_VALUE)
     CloseHandle(m_conpty_output);
+  if (m_client_stderr != INVALID_HANDLE_VALUE)
+    CloseHandle(m_client_stderr);
 
   m_conpty_input = INVALID_HANDLE_VALUE;
   m_conpty_output = INVALID_HANDLE_VALUE;
+  m_client_stderr = INVALID_HANDLE_VALUE;
 }
 
 void PseudoConsole::CloseAnonymousPipes() {
@@ -247,5 +254,67 @@ llvm::Error PseudoConsole::OpenAnonymousPipes() {
   m_pipe_child_stdin = hStdinRead;
   m_pipe_child_stdout = hStdoutWrite;
   m_mode = Mode::Pipe;
+  return llvm::Error::success();
+}
+
+llvm::Error PseudoConsole::OpenClientStdioPipes() {
+  Reset();
+
+  // Unique base name per process + object so concurrent launches don't collide.
+  char base[128];
+  ::snprintf(base, sizeof(base), "\\\\.\\pipe\\lldb-stdio-%lu-%p",
+             static_cast<unsigned long>(GetCurrentProcessId()),
+             static_cast<void *>(this));
+  m_stdin_pipe_path = std::string(base) + "-in";
+  m_stdout_pipe_path = std::string(base) + "-out";
+  m_stderr_pipe_path = std::string(base) + "-err";
+
+  // We are the pipe server for all three; the inferior (launched by lldb-server)
+  // opens the client ends by name via CreateFileW. stdin flows server->client
+  // (PIPE_ACCESS_OUTBOUND: we write, inferior reads); stdout/stderr flow
+  // client->server (PIPE_ACCESS_INBOUND: inferior writes, we read). The read
+  // ends are overlapped so ThreadedCommunication's read thread can be cancelled
+  // at teardown via CancelIoEx (see Close()).
+  auto create_pipe = [](const std::string &path, DWORD access) -> HANDLE {
+    std::wstring wpath;
+    llvm::ConvertUTF8toWide(path, wpath);
+    return CreateNamedPipeW(wpath.c_str(), access,
+                            PIPE_TYPE_BYTE | PIPE_WAIT, /*nMaxInstances=*/1,
+                            /*nOutBufferSize=*/4096, /*nInBufferSize=*/4096,
+                            /*nDefaultTimeOut=*/0, /*lpSecurityAttributes=*/nullptr);
+  };
+
+  HANDLE stdin_write = create_pipe(m_stdin_pipe_path, PIPE_ACCESS_OUTBOUND);
+  if (stdin_write == INVALID_HANDLE_VALUE)
+    return llvm::errorCodeToError(
+        std::error_code(GetLastError(), std::system_category()));
+
+  HANDLE stdout_read =
+      create_pipe(m_stdout_pipe_path, PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED);
+  if (stdout_read == INVALID_HANDLE_VALUE) {
+    DWORD err = GetLastError();
+    CloseHandle(stdin_write);
+    return llvm::errorCodeToError(std::error_code(err, std::system_category()));
+  }
+
+  HANDLE stderr_read =
+      create_pipe(m_stderr_pipe_path, PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED);
+  if (stderr_read == INVALID_HANDLE_VALUE) {
+    DWORD err = GetLastError();
+    CloseHandle(stdin_write);
+    CloseHandle(stdout_read);
+    return llvm::errorCodeToError(std::error_code(err, std::system_category()));
+  }
+
+  m_conpty_input = stdin_write;
+  m_conpty_output = stdout_read;
+  m_client_stderr = stderr_read;
+  m_mode = Mode::ClientPipe;
+
+  // NOTE(verify-on-windows): we rely on the inferior having opened the client
+  // ends (during lldb-server's CreateProcessW) before the client wires up its
+  // read threads, which happens only after the launch stop-reply arrives. If a
+  // race is observed (reads failing with ERROR_PIPE_LISTENING), issue an
+  // overlapped ConnectNamedPipe here and gate the read threads on it.
   return llvm::Error::success();
 }

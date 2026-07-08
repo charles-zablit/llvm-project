@@ -37,6 +37,10 @@
 #include "GDBRemoteCommunicationClient.h"
 #include "GDBRemoteRegisterContext.h"
 
+#if defined(_WIN32)
+#include "lldb/Host/windows/PseudoConsole.h"
+#endif
+
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringMap.h"
 
@@ -334,6 +338,23 @@ protected:
 
   // Number of vfork() operations being handled.
   uint32_t m_vfork_in_progress_count;
+
+#if defined(_WIN32)
+  // Client-owned named pipes carrying a local inferior's stdio, mirroring the
+  // POSIX pty side-channel: writing stdin / reading stdout+stderr here bypasses
+  // the gdb-remote `I`/`O` packets entirely, so stdin never has to interrupt
+  // (DebugBreakProcess) the running inferior. See
+  // PseudoConsole::OpenClientStdioPipes(). Null for remote debugging, which
+  // falls back to the interrupting `I`-packet path.
+  std::shared_ptr<PseudoConsole> m_client_stdio_pty;
+  ThreadedCommunication m_client_stderr_communication;
+
+  /// Wire up the client-owned stdio pipes: start stdout + stderr read threads
+  /// and the console input reader. Mirrors ProcessWindows::
+  /// SetPseudoConsoleHandle() but reads raw pipes (no ConPTY VT stripping) and
+  /// adds a separate stderr reader (merged into process output, like a pty).
+  void SetPseudoConsoleHandle() override;
+#endif
 
   // Accessors
   bool IsRunning(lldb::StateType state) {

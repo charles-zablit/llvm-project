@@ -373,6 +373,15 @@ HANDLE ProcessLauncherWindows::GetStdioHandle(const llvm::StringRef path,
     break;
   }
 
+  // A named-pipe client end must be opened with OPEN_EXISTING; the per-fd
+  // CREATE_ALWAYS / FILE_ATTRIBUTE_READONLY selected above is only meaningful
+  // for real files. This is what lets a local lldb client hand us stdio pipes
+  // by name (see PseudoConsole::OpenClientStdioPipes).
+  if (path.starts_with("\\\\.\\pipe\\")) {
+    create = OPEN_EXISTING;
+    flags = 0;
+  }
+
   std::wstring wpath;
   llvm::ConvertUTF8toWide(path, wpath);
   HANDLE result = ::CreateFileW(wpath.c_str(), access, share, &secattr, create,
