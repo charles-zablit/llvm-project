@@ -38,7 +38,6 @@ xfail lldb-shell :: SwiftREPL/enum-singlecase.test
 xfail lldb-api :: lang/c/shared_lib/TestSharedLib.py
 xfail lldb-api :: python_api/thread/TestThreadAPI.py
 xfail lldb-api :: source-manager/TestSourceManager.py
-xfail lldb-shell :: Driver/TestConvenienceVariables.test
 
 # https://github.com/swiftlang/llvm-project/issues/9620
 xfail lldb-shell :: Swift/expression-diagnostics.test
