@@ -35,11 +35,6 @@ xfail lldb-shell :: SwiftREPL/Regex.test
 xfail lldb-shell :: SwiftREPL/SimpleExpressions.test
 xfail lldb-shell :: SwiftREPL/enum-singlecase.test
 
-xfail lldb-api :: functionalities/breakpoint/auto_continue/TestBreakpointAutoContinue.py
-xfail lldb-api :: functionalities/breakpoint/breakpoint_conditions/TestBreakpointConditions.py
-xfail lldb-api :: functionalities/breakpoint/breakpoint_options/TestBreakpointOptions.py
-xfail lldb-api :: functionalities/breakpoint/step_over_breakpoint/TestStepOverBreakpoint.py
-xfail lldb-api :: lang/c/register_variables/TestRegisterVariables.py
 xfail lldb-api :: lang/c/shared_lib/TestSharedLib.py
 xfail lldb-api :: python_api/thread/TestThreadAPI.py
 xfail lldb-api :: source-manager/TestSourceManager.py
@@ -51,9 +46,6 @@ xfail lldb-shell :: Swift/expression-diagnostics.test
 # https://github.com/swiftlang/llvm-project/issues/9540
 xfail lldb-shell :: SymbolFile/NativePDB/local-variables.cpp
 xfail lldb-shell :: SymbolFile/NativePDB/stack_unwinding01.cpp
-
-# https://github.com/swiftlang/llvm-project/issues/9637
-xfail lldb-api :: python_api/address_range/TestAddressRange.py
 
 # https://github.com/swiftlang/llvm-project/issues/9643
 xfail lldb-shell :: Commands/command-process-launch-user-entry.test
