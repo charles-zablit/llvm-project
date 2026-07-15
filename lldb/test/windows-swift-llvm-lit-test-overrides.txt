@@ -35,15 +35,12 @@ xfail lldb-shell :: SwiftREPL/Regex.test
 xfail lldb-shell :: SwiftREPL/SimpleExpressions.test
 xfail lldb-shell :: SwiftREPL/enum-singlecase.test
 
-xfail lldb-api :: functionalities/breakpoint/address_breakpoints/TestAddressBreakpoints.py
 xfail lldb-api :: functionalities/breakpoint/auto_continue/TestBreakpointAutoContinue.py
 xfail lldb-api :: functionalities/breakpoint/breakpoint_conditions/TestBreakpointConditions.py
 xfail lldb-api :: functionalities/breakpoint/breakpoint_options/TestBreakpointOptions.py
 xfail lldb-api :: functionalities/breakpoint/step_over_breakpoint/TestStepOverBreakpoint.py
-xfail lldb-api :: functionalities/conditional_break/TestConditionalBreak.py
 xfail lldb-api :: lang/c/register_variables/TestRegisterVariables.py
 xfail lldb-api :: lang/c/shared_lib/TestSharedLib.py
-xfail lldb-api :: python_api/compile_unit/TestCompileUnitAPI.py
 xfail lldb-api :: python_api/thread/TestThreadAPI.py
 xfail lldb-api :: source-manager/TestSourceManager.py
 xfail lldb-shell :: Driver/TestConvenienceVariables.test
