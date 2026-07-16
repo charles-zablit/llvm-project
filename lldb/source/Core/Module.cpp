@@ -62,6 +62,7 @@
 #endif // LLDB_ENABLE_SWIFT
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/DJB.h"
 #include "llvm/Support/FileSystem.h"
@@ -1597,6 +1598,29 @@ bool Module::SetLoadAddress(Target &target, lldb::addr_t value,
   return false;
 }
 
+// A module's stored path can be an alias of the same on-disk file that a lookup
+// spec refers to: a Windows subst/mapped drive (the target is created as
+// `S:\...\a.out` while the running image reports its real path `C:\S\...\a.out`)
+// or a symbolic link vs. its target. The literal FileSpec comparison in
+// MatchesModuleSpec fails in that case even though both name the same file,
+// which makes Target::GetOrCreateModule create a duplicate module and orphans
+// the original module's (already resolved) breakpoint locations. Fall back to
+// comparing the canonicalized real paths. This runs only after the literal
+// comparison already failed, and only for a full-path spec, so the common case
+// pays no filesystem cost.
+static bool FileSpecsResolveToSameFile(const FileSpec &pattern,
+                                       const FileSpec &file) {
+  if (!pattern.GetDirectory() || !file)
+    return false;
+  FileSystem &fs = FileSystem::Instance();
+  llvm::SmallString<256> pattern_real, file_real;
+  if (fs.GetRealPath(pattern.GetPath(), pattern_real) ||
+      fs.GetRealPath(file.GetPath(), file_real))
+    return false;
+  return FileSpec::Equal(FileSpec(pattern_real), FileSpec(file_real),
+                         /*full=*/true);
+}
+
 bool Module::MatchesModuleSpec(const ModuleSpec &module_ref) {
   const UUID &uuid = module_ref.GetUUID();
 
@@ -1607,7 +1631,9 @@ bool Module::MatchesModuleSpec(const ModuleSpec &module_ref) {
 
   const FileSpec &file_spec = module_ref.GetFileSpec();
   if (!FileSpec::Match(file_spec, m_file) &&
-      !FileSpec::Match(file_spec, m_platform_file))
+      !FileSpec::Match(file_spec, m_platform_file) &&
+      !FileSpecsResolveToSameFile(file_spec, m_file) &&
+      !FileSpecsResolveToSameFile(file_spec, m_platform_file))
     return false;
 
   const FileSpec &platform_file_spec = module_ref.GetPlatformFileSpec();

@@ -705,37 +705,24 @@ void ProcessWindows::OnDebuggerConnected(lldb::addr_t image_base) {
   LLDB_LOG(log, "Debugger connected to process {0}.  Image base = {1:x}",
            debugger->GetProcess().GetProcessId(), image_base);
 
-  // Prefer the executable module LLDB already preloaded (the launch case).
-  // Re-deriving it from the running process' image name would resolve mapped
-  // or subst'd drives to their real path (e.g. the target created as
-  // `S:\...\a.out` reports back as `C:\S\...\a.out`), so GetOrCreateModule
-  // wouldn't match the preloaded module and would create a duplicate. That
-  // extra module leaves the original module's breakpoint location orphaned and
-  // unresolved, so a source breakpoint ends up with two locations (only one
-  // resolved). Only look the module up ourselves during attach, where we don't
-  // have it yet.
-  ModuleSP module = GetTarget().GetExecutableModule();
-  if (!module) {
-    const DWORD pid = debugger->GetProcess().GetProcessId();
-    const std::string file_name = GetProcessExecutableName(pid);
-    if (file_name.empty()) {
-      return;
-    }
-
-    FileSpec executable_file(file_name);
-    FileSystem::Instance().Resolve(executable_file);
-    ModuleSpec module_spec(executable_file);
-    Status error;
-    module =
-        GetTarget().GetOrCreateModule(module_spec, true /* notify */, &error);
-    if (!module) {
-      return;
-    }
+  ModuleSP module;
+  // During attach, we won't have the executable module, so find it now.
+  const DWORD pid = debugger->GetProcess().GetProcessId();
+  const std::string file_name = GetProcessExecutableName(pid);
+  if (file_name.empty()) {
+    return;
   }
 
-  // Always (re)set the executable module: this clears the Target's module list
-  // so module #0 is the executable and dependent DLLs preloaded by LLDB aren't
-  // duplicated when the process actually loads them (see D134636).
+  FileSpec executable_file(file_name);
+  FileSystem::Instance().Resolve(executable_file);
+  ModuleSpec module_spec(executable_file);
+  Status error;
+  module =
+      GetTarget().GetOrCreateModule(module_spec, true /* notify */, &error);
+  if (!module) {
+    return;
+  }
+
   GetTarget().SetExecutableModule(module, eLoadDependentsNo);
 
   if (auto dyld = GetDynamicLoader())
