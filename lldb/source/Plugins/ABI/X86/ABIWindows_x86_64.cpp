@@ -749,23 +749,28 @@ UnwindPlanSP ABIWindows_x86_64::CreateFunctionEntryUnwindPlan() {
   return plan_sp;
 }
 
-// Windows-x86_64 doesn't use %rbp
-// No available Unwind information for Windows-x86_64 (section .pdata)
-// Let's use SysV-x86_64 one for now
+// Windows-x86_64 does not use %rbp as a frame pointer by convention, and code
+// with no unwind info can reach this fallback: leaf functions may ship no .pdata
+// RUNTIME_FUNCTION entry, and symbol-less stubs (e.g. an __attribute__((nodebug))
+// function) have neither a symbol nor debug info to build a FuncUnwinders from.
+// The old SysV-style "CFA = rbp + 16" rule is essentially always wrong on
+// Windows-x86_64 (rbp is not a frame pointer), so unwinding out of such a frame
+// failed and, in turn, broke stepping out of no-debug leaf functions
+// (swiftlang/llvm-project#9073). The best generic assumption for Windows-x86_64 is
+// the same as the at-function-entry / no-frame-established state: the return
+// address is at the top of the stack, so CFA = rsp + 8 and pc = [CFA - 8].
 UnwindPlanSP ABIWindows_x86_64::CreateDefaultUnwindPlan() {
-  uint32_t fp_reg_num = dwarf_rbp;
   uint32_t sp_reg_num = dwarf_rsp;
   uint32_t pc_reg_num = dwarf_rip;
 
   UnwindPlan::Row row;
-
-  const int32_t ptr_size = 8;
-  row.GetCFAValue().SetIsRegisterPlusOffset(dwarf_rbp, 2 * ptr_size);
   row.SetOffset(0);
+  // RegisterContextUnwind requires the architectural default plan to mark
+  // unspecified registers undefined (they must not be propagated as caller
+  // values through this heuristic unwind).
   row.SetUnspecifiedRegistersAreUndefined(true);
-
-  row.SetRegisterLocationToAtCFAPlusOffset(fp_reg_num, ptr_size * -2, true);
-  row.SetRegisterLocationToAtCFAPlusOffset(pc_reg_num, ptr_size * -1, true);
+  row.GetCFAValue().SetIsRegisterPlusOffset(sp_reg_num, 8);
+  row.SetRegisterLocationToAtCFAPlusOffset(pc_reg_num, -8, false);
   row.SetRegisterLocationToIsCFAPlusOffset(sp_reg_num, 0, true);
 
   auto plan_sp = std::make_shared<UnwindPlan>(eRegisterKindDWARF);
