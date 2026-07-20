@@ -266,6 +266,19 @@ public:
       break;
     }
 
+    case COFF::IMAGE_REL_AMD64_SECREL: {
+      // A SECREL relocation resolves to the section-relative offset of the
+      // target, which is (the target symbol's offset within its section, added
+      // as TargetOffset below) + (the addend stored in the relocated field).
+      // Read that in-field addend here; otherwise it is lost. This matters for
+      // debug info: DWARF DW_FORM_strp / DW_FORM_sec_offset fields store their
+      // .debug_str / .debug_line offset as this addend against the target debug
+      // section's symbol, so dropping it clobbers every string/offset to 0.
+      uint8_t *Displacement = (uint8_t *)ObjTarget;
+      Addend = readBytesUnaligned(Displacement, 4);
+      break;
+    }
+
     default:
       break;
     }
