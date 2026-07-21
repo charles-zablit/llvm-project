@@ -3,10 +3,14 @@
 
 // RUN: mkdir -p %t
 // RUN: cp %S/Inputs/A.swift %t/A.swift
-// RUN: chmod -r %t/A.swift
+// RUN: %if system-windows %{ icacls %t/A.swift /deny "%USERNAME%:(R)" %} \
+// RUN: %else %{ chmod -r %t/A.swift %}
 // RUN: cd %t
 // RUN: %lldb --repl < %s 2>&1 | FileCheck %s --check-prefix=LLDB
 
 < A.swift
 // LLDB: could not read file at path 'A.swift'
+
+// RUN: %if system-windows %{ icacls %t/A.swift /reset %} \
+// RUN: %else %{ true %}
 // RUN: rm -f %t/A.swift
