@@ -1,6 +1,12 @@
 // Test that input can't be redirected from unreadable A.swift
 // REQUIRES: swift
 
+// On Windows, chmod -r does not make a file unreadable to its owner (NTFS does
+// not enforce POSIX read bits this way), so the REPL still reads A.swift and the
+// expected "could not read file" error never appears. The scenario this test
+// exercises is not reproducible on Windows.
+// UNSUPPORTED: system-windows
+
 // RUN: mkdir -p %t
 // RUN: cp %S/Inputs/A.swift %t/A.swift
 // RUN: chmod -r %t/A.swift
