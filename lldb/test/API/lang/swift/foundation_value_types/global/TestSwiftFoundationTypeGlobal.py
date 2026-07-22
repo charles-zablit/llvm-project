@@ -7,7 +7,7 @@ import os
 class TestSwiftFoundationValueTypeGlobal(TestBase):
     @skipEmbeddedSwift
     @swiftTest
-    @skipUnlessFoundation
+    @skipUnlessFoundationEssentials
     def test(self):
         self.build()
         target = self.dbg.CreateTarget(self.getBuildArtifact())

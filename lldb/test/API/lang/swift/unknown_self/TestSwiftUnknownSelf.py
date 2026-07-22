@@ -36,7 +36,7 @@ class TestSwiftUnknownSelf(lldbtest.TestBase):
     @skipEmbeddedSwift
     @skipIf(bugnumber="SR-10216", archs=['ppc64le'])
     @swiftTest
-    @skipUnlessFoundation
+    @skipUnlessFoundationEssentials
     def test_unknown_self_objc_ref(self):
         """Test unknown references to Objective-C objects."""
         self.build()

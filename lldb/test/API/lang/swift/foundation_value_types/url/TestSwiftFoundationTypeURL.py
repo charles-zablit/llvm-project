@@ -24,7 +24,7 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestCase(TestBase):
     @skipEmbeddedSwift
     @expectedFailureAll(archs=["arm64_32"], bugnumber="<rdar://problem/58065423>")
-    @skipUnlessFoundation
+    @skipUnlessFoundationEssentials
     @swiftTest
     def test_swift_url_formatters(self):
         """Test URL summary strings."""

@@ -7,7 +7,7 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestCase(TestBase):
     @skipEmbeddedSwift
     @swiftTest
-    @skipUnlessFoundation
+    @skipUnlessFoundationEssentials
     def test(self):
         """Print an ObjC derived object without using the AST context."""
         self.build()

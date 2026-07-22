@@ -12,7 +12,7 @@ import sys
 
 class TestCase(TestBase):
     @skipEmbeddedSwift
-    @skipUnlessFoundation
+    @skipUnlessFoundationEssentials
     @swiftTest
     def test_swift_date_formatters(self):
         """Test Date summary strings."""
@@ -24,7 +24,9 @@ class TestCase(TestBase):
 
         self.expect(
             "frame var date",
-            startstr="(Foundation.Date) date = 2001-01-15 13:12:00 UTC",
+            patterns=[
+                r"\(Foundation(Essentials)?\.Date\) date = 2001-01-15 13:12:00 UTC"
+            ],
         )
 
         if sys.platform != "win32":
@@ -32,5 +34,5 @@ class TestCase(TestBase):
 
         self.expect(
             "frame var nsdate",
-            startstr="(Foundation.NSDate) date = 2001-01-15 13:12:00 UTC",
+            substrs=["(Foundation.NSDate) nsdate = ", "2001-01-15 13:12:00 UTC"],
         )

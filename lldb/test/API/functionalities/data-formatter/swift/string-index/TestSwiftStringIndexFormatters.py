@@ -12,12 +12,12 @@ import lldbsuite.test.lldbutil as lldbutil
 
 class TestCase(TestBase):
     @skipEmbeddedSwift
-    @skipUnlessFoundation
+    @skipUnlessFoundationEssentials
     @swiftTest
-    def test_swift_string_index_formatters(self):
-        """Test String.Index summary strings."""
+    def test_swift_string_index_formatters_native(self):
+        """Test String.Index summary strings for a native (non-bridged) String."""
         self.build()
-        _, process, _, _ = lldbutil.run_to_source_breakpoint(
+        lldbutil.run_to_source_breakpoint(
             self, "break here", lldb.SBFileSpec("main.swift")
         )
 
@@ -74,6 +74,22 @@ class TestCase(TestBase):
                 "9[utf8]",
                 "10[utf8]",
             ],
+        )
+
+    @skipEmbeddedSwift
+    @skipUnlessFoundation
+    @swiftTest
+    def test_swift_string_index_formatters_bridged(self):
+        """Test String.Index summary strings for a bridged String.
+
+        A String bridged from NSString ("... as NSString as String") is only
+        UTF-16-backed on Darwin, where String<->NSString bridging is lazy. On
+        other platforms the bridge eagerly produces a native (UTF-8) String, so
+        the [utf16] offsets below only apply to full (Darwin) Foundation.
+        """
+        self.build()
+        _, process, _, _ = lldbutil.run_to_source_breakpoint(
+            self, "break here", lldb.SBFileSpec("main.swift")
         )
 
         #

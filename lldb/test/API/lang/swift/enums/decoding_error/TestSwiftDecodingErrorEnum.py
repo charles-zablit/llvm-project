@@ -8,7 +8,7 @@ import os
 class TestCase(TestBase):
     @skipEmbeddedSwift
     @swiftTest
-    @skipUnlessFoundation
+    @skipUnlessFoundationEssentials
     def test_swift_decoding_error(self):
         """Regression test for Swift.DecodingError, a specific instance of a multipayload enum."""
         self.build()
