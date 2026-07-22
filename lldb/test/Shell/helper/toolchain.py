@@ -325,8 +325,22 @@ def use_support_substitutions(config):
     else:
         host_flags += ["-pthread"]
 
-    config.target_shared_library_suffix = (
-        ".dylib" if platform.system() in ["Darwin"] else ".so"
+    if platform.system() == "Darwin":
+        config.target_shared_library_prefix = "lib"
+        config.target_shared_library_suffix = ".dylib"
+    elif platform.system() == "Windows":
+        # Windows Swift dynamic libraries are named <Module>.dll (no "lib"
+        # prefix, .dll suffix). lldb's module loader resolves an imported
+        # module's runtime library via PlatformWindows::GetFullNameForDylib as
+        # "<name>.dll", so REPL module-import tests must build that exact name or
+        # the library never loads and runtime symbol lookup fails.
+        config.target_shared_library_prefix = ""
+        config.target_shared_library_suffix = ".dll"
+    else:
+        config.target_shared_library_prefix = "lib"
+        config.target_shared_library_suffix = ".so"
+    config.substitutions.append(
+        ("%target-shared-library-prefix", config.target_shared_library_prefix)
     )
     config.substitutions.append(
         ("%target-shared-library-suffix", config.target_shared_library_suffix)
