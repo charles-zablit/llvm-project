@@ -198,6 +198,15 @@ if platform.system() == "Windows":
         win_paths.append(runtime_bin)
     if config.llvm_shlib_dir:
         win_paths.append(config.llvm_shlib_dir)
+    # The distribution-toolchain lldb used for the Swift REPL (see
+    # helper/toolchain.py) resolves its embedded Python (python3*.dll) from PATH
+    # and needs PYTHONHOME to find the matching stdlib; the build-tree lldb had
+    # both baked in. Harmless when the build-tree lldb is used.
+    if config.lldb_enable_swift:
+        py_dir = os.path.dirname(getattr(config, "python_executable", "") or "")
+        if py_dir and os.path.isdir(py_dir):
+            win_paths.insert(0, py_dir)
+            config.environment.setdefault("PYTHONHOME", py_dir)
     win_paths.append(config.environment.get("PATH", ""))
     config.environment["PATH"] = os.path.pathsep.join(win_paths)
 

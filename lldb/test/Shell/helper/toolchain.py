@@ -87,6 +87,73 @@ class ShTestLldb(ShTest):
         return super().execute(test, litConfig)
 
 
+def _swift_install_root_from_runtime_bin(config):
+    """Derive the Swift install root (e.g. ...\\Program Files\\Swift) from the
+    configured inferior runtime bin (...\\Runtimes\\<version>\\usr\\bin), or
+    return None. This is the only Windows Swift path the Shell lit config is
+    reliably handed (config.cmake_sysroot is empty in the toolchain build)."""
+    runtime_bin = getattr(config, "test_inferior_runtime_bin", "") or ""
+    if not runtime_bin:
+        return None
+    root = os.path.normpath(runtime_bin)
+    # ...\Runtimes\<version>\usr\bin -> ...  (bin, usr, <version>, Runtimes)
+    for _ in range(4):
+        root = os.path.dirname(root)
+    return root if root and os.path.isdir(root) else None
+
+
+def find_distribution_toolchain_lldb(config):
+    """On Windows the build-tree lldb loads the test-time-built Swift stdlib that
+    sits next to it in bin\\, whose ABI diverges from the distribution stdlib it
+    was compiled against; that mismatch access-violates in the Swift REPL and
+    expression evaluator (rdar://182901680). Return the installed distribution
+    toolchain lldb, which loads the distribution runtime through its
+    side-by-side layout, or None to fall back to the build-tree lldb.
+
+    LLDB_TEST_LLDB_EXECUTABLE overrides the search when set."""
+    override = os.environ.get("LLDB_TEST_LLDB_EXECUTABLE", "")
+    if override:
+        return override
+    if sys.platform != "win32" or not getattr(config, "lldb_enable_swift", False):
+        return None
+    root = _swift_install_root_from_runtime_bin(config)
+    if not root:
+        return None
+    import glob
+
+    found = glob.glob(os.path.join(root, "Toolchains", "*", "usr", "bin", "lldb.exe"))
+    # Prefer the asserts toolchain when several variants are installed.
+    found.sort(key=lambda p: ("+Asserts" not in p, p))
+    return found[0] if found else None
+
+
+def find_distribution_sdk(config):
+    """Windows: locate the installed distribution SDK
+    (...\\Platforms\\<platform>\\Developer\\SDKs\\*.sdk) to use as SDKROOT so the
+    Swift REPL can find the SDK. Returns None if it cannot be located."""
+    if sys.platform != "win32":
+        return None
+    root = _swift_install_root_from_runtime_bin(config)
+    if not root:
+        return None
+    import glob
+
+    found = glob.glob(
+        os.path.join(root, "Platforms", "*", "Developer", "SDKs", "*.sdk")
+    )
+
+    # The SDKs directory also holds Bootstrap.sdk; prefer the SDK whose name
+    # matches its platform (Windows.platform -> Windows.sdk) and never Bootstrap.
+    def rank(p):
+        sdk = os.path.splitext(os.path.basename(p))[0]
+        platform_dir = os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(p))))
+        plat = os.path.splitext(platform_dir)[0]
+        return (sdk == "Bootstrap", sdk != plat, p)
+
+    found.sort(key=rank)
+    return found[0] if found else None
+
+
 def use_lldb_substitutions(config):
     # Set up substitutions for primary tools.  These tools must come from config.lldb_tools_dir
     # which is basically the build output directory.  We do not want to find these in path or
@@ -119,22 +186,37 @@ def use_lldb_substitutions(config):
 
     lldb_init = _get_lldb_init_path(config)
 
+    # On Windows/Swift, run %lldb against the installed distribution toolchain
+    # lldb (which loads the distribution Swift runtime) instead of the build-tree
+    # lldb (which loads the ABI-divergent test-time stdlib and crashes the Swift
+    # REPL, rdar://182901680). Falls back to the build output directory when the
+    # distribution toolchain is not present, so other configurations are
+    # unaffected.
+    lldb_exe = find_distribution_toolchain_lldb(config)
+    if lldb_exe:
+        llvm_config.lit_config.note(
+            "using distribution toolchain lldb for %%lldb: %r" % lldb_exe
+        )
+        lldb_command = '"{0}"'.format(lldb_exe)
+    else:
+        lldb_command = FindTool("lldb")
+
     primary_tools = [
         ToolSubst(
             "%lldb",
-            command=FindTool("lldb"),
+            command=lldb_command,
             extra_args=get_lldb_args(config),
             unresolved="fatal",
         ),
         ToolSubst(
             "%lldb-init",
-            command=FindTool("lldb"),
+            command=lldb_command,
             extra_args=["-S", lldb_init],
             unresolved="fatal",
         ),
         ToolSubst(
             "%lldb-noinit",
-            command=FindTool("lldb"),
+            command=lldb_command,
             extra_args=["--no-lldbinit"],
             unresolved="fatal",
         ),
@@ -230,8 +312,10 @@ def use_support_substitutions(config):
             llvm_config.lit_config.note("using SDKROOT: %r" % sdk_path)
             host_flags += ["-isysroot", sdk_path]
     elif sys.platform == "win32":
-        # Required in SwiftREPL tests
-        sdk_path = os.environ.get("SDKROOT")
+        # Required in SwiftREPL tests. Prefer an explicit SDKROOT; otherwise fall
+        # back to the installed distribution SDK (config.cmake_sysroot is empty
+        # in the Swift toolchain build).
+        sdk_path = os.environ.get("SDKROOT") or find_distribution_sdk(config)
         if sdk_path:
             llvm_config.lit_config.note(f"using SDKROOT: {sdk_path}")
             llvm_config.with_environment("SDKROOT", sdk_path)
