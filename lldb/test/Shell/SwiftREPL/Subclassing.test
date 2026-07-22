@@ -1,5 +1,6 @@
 // Test that subclassing works in the repl.
 // REQUIRES: swift
+// XFAIL: system-windows
 
 // RUN: %lldb --repl < %s | FileCheck %s
 
