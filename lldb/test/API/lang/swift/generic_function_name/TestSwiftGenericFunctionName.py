@@ -7,7 +7,6 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftGenericFunction(lldbtest.TestBase):
     @skipEmbeddedSwift
     @swiftTest
-    @skipIfWindows  # FIXME: dead-process breakpoint description returns 'No value' (CodeView/PDB static-name gap)
     def test(self):
         """Test display of generic function names"""
         self.build()

@@ -664,7 +664,12 @@ void ProcessWindows::OnExitProcess(uint32_t exit_code) {
     ModuleSP executable_module = target->GetExecutableModule();
     ModuleList unloaded_modules;
     unloaded_modules.Append(executable_module);
-    target->ModulesDidUnload(unloaded_modules, true);
+    // Notify that the module unloaded, but keep the breakpoint locations
+    // (delete_locations=false) so they survive process exit like on other
+    // platforms: post-mortem inspection can still describe them and they
+    // re-resolve on rerun. Deleting them here left breakpoints with zero
+    // locations after the process exited on Windows.
+    target->ModulesDidUnload(unloaded_modules, false);
   }
 
   SetExitStatus(exit_code, /*exit_string=*/"");
