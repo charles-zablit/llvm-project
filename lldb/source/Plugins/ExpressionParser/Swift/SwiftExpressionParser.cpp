@@ -887,6 +887,15 @@ SwiftExpressionParser::GetASTContext(DiagnosticManager &diagnostic_manager) {
     m_swift_ast_ctx.GetIRGenOptions().ForcePublicLinkage = true;
 
     m_swift_ast_ctx.GetIRGenOptions().DisableRoundTripDebugTypes = true;
+    // Emit full runtime reflection metadata for expression modules. In the
+    // default DebuggerOnly mode the reflection records are not marked
+    // llvm.used, so on COFF (Windows) the unreferenced private COMDAT globals
+    // are dropped before the JIT object is emitted and lldb cannot read values
+    // of types defined in the expression (e.g. REPL-defined structs/enums).
+    // Marking them used (Runtime mode) keeps the .sw5* sections in the JIT
+    // object. rdar://182901680.
+    m_swift_ast_ctx.GetIRGenOptions().ReflectionMetadata =
+        swift::ReflectionMetadataMode::Runtime;
     m_ast_init_successful = true;
   });
   if (m_ast_init_successful)
