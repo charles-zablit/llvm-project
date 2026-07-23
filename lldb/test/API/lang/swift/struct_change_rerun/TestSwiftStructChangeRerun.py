@@ -25,7 +25,6 @@ class TestSwiftStructChangeRerun(TestBase):
     @swiftTest
     @skipIf(
         oslist=["windows"],
-        swift_module_importer="noclang",
         bugnumber="rdar://178182243",
     )
     def test_swift_struct_change_rerun(self):
