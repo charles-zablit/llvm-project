@@ -153,6 +153,7 @@ class TestDAP_runInTerminal(lldbdap_testcase.DAPTestCaseBase):
 
         self.continue_to_exit()
 
+    @skipIfWindows # rdar://177419646
     @skipIfAsan
     @skipIf(oslist=["linux"], archs=no_match(["x86_64"]))
     def test_runInTerminalWithObjectEnv(self):
