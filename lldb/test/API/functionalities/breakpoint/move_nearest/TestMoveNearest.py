@@ -1,4 +1,5 @@
 import lldb
+from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
 import lldbsuite.test.lldbutil as lldbutil
 
@@ -16,6 +17,7 @@ class TestMoveNearest(TestBase):
         print("BR_Between found at", self.line_between)
         self.line_main = line_number("main.cpp", "// !BR_main")
 
+    @skipIfWindows  # FIXME: header #included in two modules yields 2 breakpoint locations on Windows
     def test(self):
         """Test target.move-to-nearest logic"""
 
