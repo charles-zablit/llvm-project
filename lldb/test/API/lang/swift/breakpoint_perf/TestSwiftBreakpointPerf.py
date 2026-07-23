@@ -6,6 +6,7 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftReflectionLoading(lldbtest.TestBase):
     mydir = lldbtest.TestBase.compute_mydir(__file__)
 
+    @skipEmbeddedSwiftOnWindows
     @swiftTest
     def test(self):
         """Test that no SwiftASTContext is initialized just to stop at a breakpoint"""
