@@ -1,7 +1,10 @@
 SWIFT_SOURCES=main.swift
-SWIFTFLAGS_EXTRAS= -I$(shell pwd)
+# Use $(BUILDDIR) rather than $(shell pwd): on Windows the latter returns an
+# MSYS path (/s/m/...) the Swift frontend/linker can't resolve, so SomeLibrary
+# fails to resolve. Makefile.rules normalizes BUILDDIR to a native path there.
+SWIFTFLAGS_EXTRAS= -I$(BUILDDIR)
 MODULENAME=main
-LD_EXTRAS=-L$(shell pwd)
+LD_EXTRAS=-L$(BUILDDIR)
 
 all: clean SomeLibrary.swiftmodule a.out
 
