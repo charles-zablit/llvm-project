@@ -179,6 +179,14 @@ bool IRForTarget::CreateResultVariable(llvm::Function &llvm_function) {
     // on Windows, so let's only check for Itanium guard variables.
     bool is_guard_var = isGuardVariableSymbol(result_name, /*MS ABI*/ false);
 
+    // With the Microsoft C++ ABI, a static result variable with a non-trivial
+    // initializer also emits a dynamic initializer function whose mangled name
+    // ("??__F...$__lldb_expr_result...@YAXXZ") contains the result name. Only
+    // the result variable itself is a global variable, so skip anything else
+    // (e.g. that initializer function) to avoid matching it first.
+    if (!isa<GlobalVariable>(value_symbol.second))
+      continue;
+
     if (result_name.contains("$__lldb_expr_result_ptr") && !is_guard_var) {
       found_result = true;
       m_result_is_pointer = true;
@@ -1173,6 +1181,7 @@ bool IRForTarget::HandleObjCClass(Value *classlist_reference) {
 
 bool IRForTarget::RemoveCXAAtExit(BasicBlock &basic_block) {
   std::vector<CallInst *> calls_to_remove;
+  llvm::SmallVector<llvm::Function *, 2> dead_atexit_callbacks;
 
   for (Instruction &inst : basic_block) {
     CallInst *call = dyn_cast<CallInst>(&inst);
@@ -1185,20 +1194,51 @@ bool IRForTarget::RemoveCXAAtExit(BasicBlock &basic_block) {
 
     llvm::Function *func = call->getCalledFunction();
 
-    if (func && func->getName() == "__cxa_atexit")
+    // Strip registrations of static destructors: the expression runs once and
+    // LLDB manages the result variable's lifetime, so an at-exit handler would
+    // only leave a dangling pointer into freed JIT memory. The Itanium C++ ABI
+    // uses __cxa_atexit; the Microsoft C++ ABI uses plain atexit (whose
+    // argument is a function pointer that ResolveCalls cannot rewrite).
+    if (func && (func->getName() == "__cxa_atexit" ||
+                 func->getName() == "atexit"))
       remove = true;
 
     llvm::Value *val = call->getCalledOperand();
 
-    if (val && val->getName() == "__cxa_atexit")
+    if (val && (val->getName() == "__cxa_atexit" || val->getName() == "atexit"))
       remove = true;
 
-    if (remove)
+    if (remove) {
+      // With the MS C++ ABI the registered callback is an internal "dynamic
+      // atexit destructor" thunk (mangled "??__F...") that hard-references the
+      // static it destroys -- e.g. the expression result variable. Once its
+      // registration is gone the thunk is dead, but its reference would still
+      // trip later passes (UnfoldConstant sees a use of the result variable in
+      // a function other than the wrapper). Remember such thunks so we can drop
+      // their bodies below.
+      if (call->arg_size() > 0)
+        if (auto *cb = dyn_cast<llvm::Function>(
+                call->getArgOperand(0)->stripPointerCasts()))
+          if (cb->hasInternalLinkage() && cb->getName().starts_with("??__"))
+            dead_atexit_callbacks.push_back(cb);
       calls_to_remove.push_back(call);
+    }
   }
 
   for (CallInst *ci : calls_to_remove)
     ci->eraseFromParent();
+
+  // Empty (rather than erase -- runOnModule is iterating the module's function
+  // list) any now-orphaned atexit-destructor thunk so nothing references the
+  // statics it used to destroy. These thunks return void.
+  for (llvm::Function *cb : dead_atexit_callbacks) {
+    if (!cb->use_empty())
+      continue;
+    cb->deleteBody();
+    llvm::BasicBlock *entry =
+        llvm::BasicBlock::Create(cb->getContext(), "", cb);
+    llvm::ReturnInst::Create(cb->getContext(), entry);
+  }
 
   return true;
 }
