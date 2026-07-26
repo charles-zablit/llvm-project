@@ -39,7 +39,13 @@ class TestLibraryResilient(TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
-    @expectedFailureAll(oslist=["windows"]) # Requires Remote Mirrors support
+    # rdar://183113341: on Windows the build now succeeds (the Makefile no longer
+    # passes -rpath to the MSVC linker) and `fr var` recovery + `expr container`
+    # work, but `expr container.wrapped` fails because swiftc does not export the
+    # resilient property getter (SomeLibrary.ContainsTwoInts.wrapped.getter) from
+    # SomeLibrary.dll on Windows, so the expression JIT can't resolve it. That is
+    # a compiler codegen/export gap, not Remote Mirrors.
+    @expectedFailureAll(oslist=["windows"])
     def test_implementation_only_import_library(self):
         """Test `@_implementationOnly import` in a resilient library used by the main executable
 
