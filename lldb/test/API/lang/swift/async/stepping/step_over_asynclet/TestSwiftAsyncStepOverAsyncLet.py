@@ -14,6 +14,13 @@ class TestCase(lldbtest.TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
+    # rdar://183113449: async-let step-over is still broken on Windows/Linux even
+    # after the ThreadPlanStepOverRange async-call step-over fix (which enables
+    # the sibling step_over test). Here StepOver stops with eStopReasonNone
+    # instead of eStopReasonPlanComplete: `async let` spawns a child task, so
+    # stepping over it involves a task switch, which the step plan does not yet
+    # follow. This is the same task-switching gap tracked for the queues /
+    # task-switch tests, not the plain async-call step-over that was fixed.
     @skipIf(oslist=["windows", "linux"])
     def test_nothrow(self):
         """Test conditions for async step-over."""
@@ -34,6 +41,9 @@ class TestCase(lldbtest.TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
+    # See test_nothrow: async-let step-over needs task-switch following, which is
+    # not yet implemented. Same task-switching gap as the queues / task-switch
+    # tests.
     @skipIf(oslist=["windows", "linux"])
     def test_throw(self):
         """Test conditions for async step-over."""

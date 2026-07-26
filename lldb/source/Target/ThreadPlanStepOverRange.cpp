@@ -157,7 +157,47 @@ bool ThreadPlanStepOverRange::ShouldStop(Event *event_ptr) {
   LLDB_LOGF(log, "ThreadPlanStepOverRange compare frame result: %d.",
             frame_order);
 
+  // When stepping over an async call, the resumed continuation funclet of the
+  // SAME async function can appear as an OLDER frame (its CFA -- the async
+  // context -- differs from the start funclet's), so
+  // CompareCurrentFrameToStartFrame returns eFrameCompareOlder even though we
+  // have not returned to the caller. Detect that and route it to the in-range
+  // handling below (which re-anchors the step range in the current funclet)
+  // instead of treating it as a return to the caller.
+  //
+  // A related problem: stepping over an async CALL can land us in the callee
+  // while the frame comparison still reports eFrameCompareOlder, because the
+  // comparison relies on CFA address ordering and a Swift async frame's CFA is
+  // its heap-allocated async context, not a stack address (so a callee's CFA
+  // can be numerically "older" than the caller's). Distinguish a genuine return
+  // to the caller from a descent into a callee by checking whether the start
+  // funclet is still present as an older frame in the current backtrace: if it
+  // is, we called into the callee and must step back out (handled like the
+  // eFrameCompareYounger case), not stop.
+  bool older_but_equivalent = false;
+  bool descended_into_callee = false;
   if (frame_order == eFrameCompareOlder) {
+    StackFrameSP cur_frame_sp = thread.GetStackFrameAtIndex(0);
+    if (cur_frame_sp &&
+        IsEquivalentContext(
+            cur_frame_sp->GetSymbolContext(eSymbolContextEverything))) {
+      older_but_equivalent = true;
+    } else {
+      for (uint32_t i = 1;; ++i) {
+        StackFrameSP older_frame_sp = thread.GetStackFrameAtIndex(i);
+        if (!older_frame_sp)
+          break;
+        if (IsEquivalentContext(
+                older_frame_sp->GetSymbolContext(eSymbolContextEverything))) {
+          descended_into_callee = true;
+          break;
+        }
+      }
+    }
+  }
+
+  if (frame_order == eFrameCompareOlder && !older_but_equivalent &&
+      !descended_into_callee) {
     // If we're in an older frame then we should stop.
     //
     // A caveat to this is if we think the frame is older but we're actually in
@@ -173,7 +213,8 @@ bool ThreadPlanStepOverRange::ShouldStop(Event *event_ptr) {
     if (new_plan_sp && log)
       LLDB_LOGF(log,
                 "Thought I stepped out, but in fact arrived at a trampoline.");
-  } else if (frame_order == eFrameCompareYounger) {
+  } else if (frame_order == eFrameCompareYounger ||
+             (frame_order == eFrameCompareOlder && descended_into_callee)) {
     // Make sure we really are in a new frame.  Do that by unwinding and seeing
     // if the start function really is our start function...
     for (uint32_t i = 1;; ++i) {

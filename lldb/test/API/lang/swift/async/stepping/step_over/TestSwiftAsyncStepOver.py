@@ -19,33 +19,12 @@ class TestCase(lldbtest.TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
-    # rdar://183113449: async step-over is broken on Windows. Stepping over
-    # `let x = await f()` (line 3) stops back on line 3 (the await resume point,
-    # in main's TQ0_ funclet) instead of continuing to line 4, then the next step
-    # descends into f(). Root cause: the frame CFA increases across the await
-    # (e.g. 0x..5b0 -> 0x..660), so CompareCurrentFrameToStartFrame returns
-    # eFrameCompareOlder, and ThreadPlanStepOverRange::ShouldStop's Older branch
-    # (ThreadPlanStepOverRange.cpp ~line 160) does NOT consult IsEquivalentContext
-    # -- unlike the eFrameCompareYounger branch (~line 189) -- so the resumed
-    # funclet is mistaken for a return to the caller even though it is the same
-    # async function (AreFuncletsOfSameAsyncFunction). Fix direction: in the Older
-    # branch, when IsEquivalentContext(current) is true, re-establish the line
-    # range in the current funclet and keep stepping instead of stopping. This
-    # touches core step-over for all languages, so it needs broad regression
-    # testing. (On Darwin the async CFA is stable across the await -> the frames
-    # compare Equal -> the bug doesn't manifest.) The sibling
-    # test_efficient_step_over_packets subtest is debugserver/MultiMemRead
-    # specific and does not apply to the Windows process plugin.
-    # TWO-PART bug (verified on host): (1) the resumed-funclet CFA bump makes the
-    # step-over ThreadPlan mistake the async continuation for a return to the
-    # caller and stop early on line 3 (the eFrameCompareOlder branch at
-    # ThreadPlanStepOverRange.cpp:160 doesn't consult IsEquivalentContext);
-    # routing that case to the in-range handling (which re-anchors via
-    # InRange()'s "same line, different range" path) fixes part 1 -- but then
-    # (2) the step descends INTO f() (line 15) instead of stopping on line 4,
-    # because stepping over the async CALL (`await f()`) doesn't step over the
-    # callee. Part 2 is the deeper async-call step-over problem and is still open.
-    @skipIf(oslist=["windows", "linux"])
+    # Enabled on Windows by the ThreadPlanStepOverRange async-call step-over fix
+    # (see ThreadPlanStepOverRange::ShouldStop). Left gated on Linux only because
+    # the fix has not been verified there yet; the fix is in core, platform
+    # independent step-over code so Linux is expected to pass once someone
+    # confirms it.
+    @skipIf(oslist=["linux"])
     def test(self):
         """Test conditions for async step-over."""
         self.build()
