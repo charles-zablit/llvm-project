@@ -24,6 +24,7 @@
 #include "Utility/ARM64_DWARF_Registers.h"
 #include "lldb/Breakpoint/StoppointCallbackContext.h"
 #include "lldb/Core/Debugger.h"
+#include "lldb/Core/Disassembler.h"
 #include "lldb/Core/JITSection.h"
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Core/Progress.h"
@@ -3385,6 +3386,212 @@ GetFrameSetupInfo(const UnwindPlan &unwind_plan, RegisterContext &regctx) {
                         fp_locs[next_row_idx].GetOffset()};
 }
 
+/// Some x86_64 async funclets (notably on Windows, where they are frameless
+/// and do not spill the async context below a frame pointer) preserve their
+/// async context on the stack instead. This helper recovers this frame's async
+/// context from that stack slot for two frameless patterns:
+///
+/// * "Suspend" ("Y") funclets: the async register holds this frame's context
+///   directly. It is spilled to a stack slot in the prologue, and then REUSED
+///   to hold the callee's context right before an async tail-call. Past that
+///   reuse point, reading the async register yields the wrong (callee) context.
+///   Detected by (a) a spill of the async register to the stack, followed by
+///   (b) a write to the async register.
+///
+/// * "Await resume" ("Q") funclets: the async register holds an INDIRECT
+///   context (a pointer to this frame's context) and is never set to the direct
+///   context. The funclet dereferences the register, spills the resulting
+///   direct context to the stack, frees the indirect context via
+///   swift_task_dealloc, and reuses the register for the callee's context.
+///   Detected by (a) a load through the async register into a scratch register,
+///   followed by (b) a spill of that scratch register to the stack.
+///
+/// In both cases the stack slot holds this frame's context for the rest of the
+/// funclet, and is read relative to the current rsp (which is constant across
+/// these single-`sub`/`add` frameless funclets). Returns std::nullopt when the
+/// pattern is absent (e.g. before the spill), in which case the caller reads
+/// the async register directly (and dereferences it once if IsIndirectContext
+/// says so).
+static std::optional<addr_t> ReadAsyncContextFromFramelessSpill(
+    Process &process, SymbolContext &sc, Address pc, Address func_start_addr,
+    RegisterContext &regctx, AsyncUnwindRegisterNumbers regnums) {
+  Target &target = process.GetTarget();
+  // This spill/reuse pattern is specific to the x86_64 async ABI (r14). The
+  // arm64(e) transition problem is handled by IsIndirectContext.
+  if (target.GetArchitecture().GetMachine() != llvm::Triple::x86_64)
+    return std::nullopt;
+
+  const RegisterInfo *async_ri = regctx.GetRegisterInfo(
+      regnums.GetRegisterKind(), regnums.async_ctx_regnum);
+  if (!async_ri || !async_ri->name)
+    return std::nullopt;
+  llvm::StringRef async_name(async_ri->name); // e.g. "r14"
+
+  ConstString mangled = sc.function
+                            ? sc.function->GetMangled().GetMangledName()
+                            : (sc.symbol ? sc.symbol->GetMangled().GetMangledName()
+                                         : ConstString());
+  const bool is_await_resume =
+      SwiftLanguageRuntime::IsSwiftAsyncAwaitResumePartialFunctionSymbol(
+          mangled.GetStringRef());
+
+  const addr_t start_faddr = func_start_addr.GetFileAddress();
+  const addr_t pc_faddr = pc.GetFileAddress();
+  if (start_faddr == LLDB_INVALID_ADDRESS || pc_faddr <= start_faddr)
+    return std::nullopt;
+
+  // For "await resume" (Q) funclets, only recover the (already dereferenced)
+  // direct context once past the prologue. Up to the end of the prologue,
+  // IsIndirectContext still treats the async register as indirect and reads
+  // this frame's context via a single dereference; returning the direct context
+  // here would then be dereferenced a second time.
+  if (is_await_resume) {
+    uint32_t prologue_size =
+        sc.function ? sc.function->GetPrologueByteSize()
+                    : (sc.symbol ? sc.symbol->GetPrologueByteSize() : 0);
+    if (pc_faddr <= start_faddr + prologue_size)
+      return std::nullopt;
+  }
+
+  AddressRange range(func_start_addr, pc_faddr - start_faddr);
+  DisassemblerSP disasm = Disassembler::DisassembleRange(
+      target.GetArchitecture(), /*plugin_name*/ nullptr, /*flavor*/ nullptr,
+      /*cpu*/ nullptr, /*features*/ nullptr, target,
+      llvm::ArrayRef<AddressRange>(range));
+  if (!disasm)
+    return std::nullopt;
+
+  auto is_async_reg = [&](llvm::StringRef op) {
+    op = op.trim();
+    op.consume_front("%");
+    return op == async_name;
+  };
+  // Parse `$imm` (AT&T immediate) into `value`; returns false on failure.
+  auto parse_imm = [](llvm::StringRef op, uint64_t &value) {
+    op = op.trim();
+    return op.consume_front("$") && !op.getAsInteger(0, value);
+  };
+  // A load through the async register, e.g. "(%r14)".
+  const std::string deref_operand = ("(%" + async_name + ")").str();
+
+  const InstructionList &insns = disasm->GetInstructionList();
+  std::optional<int64_t> spill_disp;   // spill: displacement off the body rsp
+  std::optional<uint64_t> frame_size;  // the prologue `sub $N, %rsp`
+  bool clobbered = false;              // async register overwritten (Y funclets)
+  std::string direct_ctx_reg;          // scratch reg holding *async_reg (Q funclets)
+  for (size_t i = 0, n = insns.GetSize(); i < n; ++i) {
+    InstructionSP insn = insns.GetInstructionAtIndex(i);
+    if (!insn)
+      continue;
+    llvm::StringRef mnem(insn->GetMnemonic(nullptr));
+    llvm::StringRef ops(insn->GetOperands(nullptr));
+    // AT&T syntax: "src, dst".
+    size_t comma = ops.find(", ");
+    if (comma == llvm::StringRef::npos)
+      continue;
+    llvm::StringRef src = ops.substr(0, comma).trim();
+    llvm::StringRef dst = ops.substr(comma + 2).trim();
+
+    // The single prologue stack allocation `sub $N, %rsp` fixes the frame size.
+    // These funclets never adjust rsp elsewhere (only the matching epilog add),
+    // so rsp is constant across the whole body.
+    if (!frame_size && mnem.starts_with("sub") && dst == "%rsp") {
+      uint64_t n_bytes = 0;
+      if (parse_imm(src, n_bytes))
+        frame_size = n_bytes;
+      continue;
+    }
+    if (!mnem.starts_with("mov"))
+      continue;
+
+    if (is_await_resume) {
+      // "Await resume" (Q) funclets never hold this frame's context in the
+      // async register: it holds an indirect context (a pointer to the
+      // context). The funclet dereferences it and spills the resulting direct
+      // context to the stack, so recover the context from that stack slot.
+      // (a) Dereference: `mov (%r14), %rDST` loads the direct context into rDST.
+      if (src == deref_operand) {
+        direct_ctx_reg = dst.str();
+        continue;
+      }
+      // (b) Spill of that direct context: `mov %rDST, disp(%rsp)`. Keep the
+      // first such spill; the slot stays valid for the rest of the funclet,
+      // even after swift_task_dealloc frees the indirect context and the async
+      // register is reused for the callee's context.
+      if (!spill_disp && !direct_ctx_reg.empty() && src == direct_ctx_reg &&
+          dst.ends_with("(%rsp)")) {
+        llvm::StringRef disp_str = dst.take_front(dst.size() - strlen("(%rsp)"));
+        int64_t disp = 0;
+        if (disp_str.empty() || !disp_str.getAsInteger(0, disp))
+          spill_disp = disp;
+        continue;
+      }
+      // The scratch register was overwritten before it could be spilled.
+      if (!direct_ctx_reg.empty() && dst == direct_ctx_reg)
+        direct_ctx_reg.clear();
+      continue;
+    }
+
+    // "Suspend" (Y) funclets hold this frame's context in the async register.
+    // (a) Spill of the async register to a stack slot: `mov %r14, disp(%rsp)`.
+    // Only record spills that happen before the register is reused.
+    if (!clobbered && is_async_reg(src) && dst.ends_with("(%rsp)")) {
+      llvm::StringRef disp_str = dst.take_front(dst.size() - strlen("(%rsp)"));
+      int64_t disp = 0;
+      if (disp_str.empty() || !disp_str.getAsInteger(0, disp))
+        spill_disp = disp;
+      continue;
+    }
+    // (b) Reuse: the async register becomes the destination of a mov (the
+    // callee's context is loaded into it before the async tail-call).
+    if (is_async_reg(dst))
+      clobbered = true;
+  }
+
+  if (is_await_resume) {
+    if (!spill_disp)
+      return std::nullopt;
+  } else if (!clobbered || !spill_disp) {
+    return std::nullopt;
+  }
+
+  // The spill displacement is relative to the body value of rsp (the value
+  // after the prologue `sub`). rsp is constant across the body, so the slot is
+  // simply `rsp + disp` -- unless we have already stepped past a matching
+  // epilog `add $N, %rsp`, which restores rsp. Detect that purely locally: the
+  // only place rsp is restored is the tail-call, whose immediately preceding
+  // instruction is `add $N, %rsp`. Using rsp directly avoids the assembly
+  // unwind plan's CFA, which is unreliable in funclets with multiple exits (it
+  // resets rsp after the first epilog it sees in address order).
+  bool rsp_restored = false;
+  if (frame_size && insns.GetSize() > 0) {
+    if (InstructionSP last =
+            insns.GetInstructionAtIndex(insns.GetSize() - 1)) {
+      llvm::StringRef m(last->GetMnemonic(nullptr));
+      llvm::StringRef o(last->GetOperands(nullptr));
+      size_t comma = o.find(", ");
+      if (m.starts_with("add") && comma != llvm::StringRef::npos) {
+        llvm::StringRef s = o.substr(0, comma).trim();
+        llvm::StringRef d = o.substr(comma + 2).trim();
+        uint64_t n_bytes = 0;
+        if (d == "%rsp" && parse_imm(s, n_bytes) && n_bytes == *frame_size)
+          rsp_restored = true;
+      }
+    }
+  }
+
+  addr_t sp = regctx.GetSP(LLDB_INVALID_ADDRESS);
+  if (sp == LLDB_INVALID_ADDRESS)
+    return std::nullopt;
+  addr_t body_rsp = rsp_restored && frame_size ? sp - *frame_size : sp;
+  addr_t spill_addr = process.FixDataAddress(body_rsp + *spill_disp);
+  Status error;
+  addr_t async_ctx = process.ReadPointerFromMemory(spill_addr, error);
+  if (error.Fail())
+    return std::nullopt;
+  return async_ctx;
+}
+
 /// Reads the async register from its ABI-guaranteed stack-slot, or directly
 /// from the register depending on where pc is relative to the start of the
 /// function.
@@ -3403,9 +3610,18 @@ static llvm::Expected<addr_t> ReadAsyncContextRegisterFromUnwind(
   // Is PC before the frame formation? If so, use async register directly.
   // This handles frameless functions, as frame_setup_func_offset is INT_MAX.
   addr_t pc_offset = pc.GetFileAddress() - func_start_addr.GetFileAddress();
-  if ((int64_t)pc_offset < frame_setup->frame_setup_func_offset)
+  if ((int64_t)pc_offset < frame_setup->frame_setup_func_offset) {
+    // A frameless funclet keeps this frame's async context on the stack rather
+    // than in the async register for part of its body (the register gets reused
+    // for the callee's context, and for "await resume" funclets it only ever
+    // holds an indirect context). Recover the context from that stack slot when
+    // the register no longer holds it directly.
+    if (std::optional<addr_t> spilled = ReadAsyncContextFromFramelessSpill(
+            process, sc, pc, func_start_addr, regctx, regnums))
+      return *spilled;
     return ReadRegisterAsAddress(regctx, regnums.GetRegisterKind(),
                                  regnums.async_ctx_regnum);
+  }
 
   // A frame was formed, and FP was saved at a CFA offset. Compute CFA and read
   // the location beneath where FP was saved.

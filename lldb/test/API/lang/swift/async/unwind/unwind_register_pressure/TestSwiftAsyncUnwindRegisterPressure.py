@@ -53,7 +53,7 @@ class TestCase(lldbtest.TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
-    @skipIf(oslist=["windows", "linux"])
+    @skipIf(oslist=["linux"])  # rdar://183113449: unwinding the suspend funclet works on Windows; not yet verified on Linux.
     def test(self):
         """Test that the debugger can unwind at all instructions of all funclets"""
         self.build()

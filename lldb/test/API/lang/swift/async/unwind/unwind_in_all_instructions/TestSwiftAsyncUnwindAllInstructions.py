@@ -156,7 +156,11 @@ class TestCase(lldbtest.TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
-    @skipIf(oslist=["windows", "linux"])
+    # rdar://183113449: async unwinding at every instruction of every funclet
+    # works on Windows now that ReadAsyncContextFromFramelessSpill recovers this
+    # frame's async context from the prologue stack spill (Win64 funclets are
+    # frameless and reuse/indirect the async register). Not yet verified on Linux.
+    @skipIf(oslist=["linux"])
     def test(self):
         """Test that the debugger can unwind at all instructions of all funclets"""
         self.build()
