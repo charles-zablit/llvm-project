@@ -70,9 +70,12 @@ class TestMainExecutable(TestBase):
     @swiftTest
     @skipEmbeddedSwift
     @skipIfLinux # rdar://problem/67348391
-    # On Windows lldb resolves the type via DWARFImporter even with the
-    # swiftmodule removed, so the expected "<could not resolve type>" recovery
-    # output differs (this is the "least important", machine-dependent config).
+    # Same machine-dependent "least important config" already skipped on Linux:
+    # non-Darwin lldb does not produce the Darwin "<could not resolve type>"
+    # recovery output for this stripped-library scenario. Per the FIXME below,
+    # this config yields different results on different machines, so it only
+    # requires "don't crash", not an exact string. Windows resolving the type
+    # is better behavior, not a divergence worth changing the test for.
     @skipIfWindows
     def test_implementation_only_import_main_executable_no_library_module(self):
         """Test `@_implementationOnly import` in the main executable, after removing the library's swiftmodule
