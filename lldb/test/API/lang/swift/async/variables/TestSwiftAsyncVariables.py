@@ -10,14 +10,14 @@ class TestSwiftAsyncVariables(lldbtest.TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
-    # rdar://183113449: on Windows `frame variable x` returns GARBAGE (not 23),
-    # yet the DWARF location for x is present and correct-looking
-    # (DW_OP_fbreg +224, DW_OP_deref, DW_OP_plus_uconst 0x80 with frame_base
-    # DW_OP_reg7 RSP, plus DW_OP_entry_value(reg14) variants for the resumed
-    # funclets). So this is an lldb-side async coro-frame local-variable
-    # evaluation bug (NOT a missing-debug-info compiler gap as first assumed);
-    # the exact fault (fbreg/CFA vs the deref+offset chain for the heap coro
-    # frame) still needs pinning. Reads garbage on Windows; correct off-Windows.
+    # rdar://183113449: on Windows `frame variable x` (CLI) shows garbage, but the
+    # SB API frame.FindVariable("x") returns the correct 23 (verified: x lives at
+    # coro-frame+0xc0 and reads 23; the coro ptr is at [rsp+224]). So the value is
+    # readable and lldb CAN compute it -- the bug is that the frame-variable
+    # command path resolves `x` to the wrong one of the 4 nested-scope x DIEs (the
+    # for-loop `x` vs the inner `let x = x!`) on Windows async funclets. An
+    # lldb-side variable/lexical-scope resolution bug, not a compiler or Remote
+    # Mirrors gap. Correct off-Windows.
     @skipIf(oslist=['windows', 'linux'])
     def test(self):
         """Test local variables in async functions"""
