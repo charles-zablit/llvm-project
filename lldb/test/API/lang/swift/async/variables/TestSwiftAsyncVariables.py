@@ -10,16 +10,7 @@ class TestSwiftAsyncVariables(lldbtest.TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
-    # rdar://183113449: on Windows `frame variable x` is CORRECT (23) at the stop
-    # BEFORE `await` (line 10), but returns garbage at the stop AFTER `await`
-    # (line 15) -- and CLI and SB API agree at both stops (so it is not a
-    # command-vs-API scope issue). The post-await x uses the resumed-funclet
-    # location DW_OP_entry_value(DW_OP_reg14) + DW_OP_deref + offset; lldb
-    # mis-evaluates the async-continuation local there (the async context /
-    # entry-value reconstruction at the resumed funclet), yielding garbage. An
-    # lldb-side async-continuation variable-reconstruction bug, not a compiler or
-    # Remote Mirrors gap. Correct off-Windows.
-    @skipIf(oslist=['windows', 'linux'])
+    @skipIf(oslist=['linux'])
     def test(self):
         """Test local variables in async functions"""
         self.build()
