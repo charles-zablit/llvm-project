@@ -14,6 +14,16 @@ class TestSwiftForwardInteropSTLTypes(TestBase):
     )  # rdar://106438227 (TestSTLTypes fails when clang importer is disabled)
     @skipEmbeddedSwift
     @swiftTest
+    # rdar://183113459: on Windows the Swift/C++ importer brings in the MSVC STL
+    # std::map/set/unordered_map/unordered_set/optional as OPAQUE types (the
+    # imported ValueObject has 0 fields / 0 children -- e.g. `map` reports
+    # canonical __C.std.map<...> with no accessible `_Mypair`), so `frame var
+    # map` shows the type name but no elements. std::vector imports with its
+    # fields visible and works. This is a Swift/C++-interop import (or MSVC
+    # debug-info completeness) gap upstream of lldb's data formatters -- a data
+    # formatter cannot help because there are no members to read. The test
+    # passes on Darwin, where the imported containers expose their libc++
+    # members. Cross-repo (Swift compiler / debug info), not an lldb fix.
     @skipIfWindows
     def test(self):
         self.build()
