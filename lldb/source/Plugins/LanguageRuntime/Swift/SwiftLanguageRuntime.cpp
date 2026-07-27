@@ -70,6 +70,7 @@
 #include "llvm/ADT/StringRef.h"
 #include "llvm/BinaryFormat/Dwarf.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Endian.h"
 #include "llvm/Support/Error.h"
 #include "llvm/Support/FormatAdapters.h"
 #include "llvm/Support/Memory.h"
@@ -4088,6 +4089,187 @@ PthreadReservedKeyTaskFinder::ComputeTaskAddrLocation(Thread &real_thread) {
   return tsd_addr + task_ptr_offset_in_tls;
 }
 
+/// Recover the byte offset of the current-task pointer within the concurrency
+/// library's TLS block by reading the runtime's own accessor.
+///
+/// `swift_task_getCurrent` is exactly the lookup a debugger has to emulate:
+///
+///   mov  _tls_index(%rip), %eax
+///   mov  %gs:0x58, %rcx            ; TEB->ThreadLocalStoragePointer
+///   mov  (%rcx,%rax,8), %rax       ; this module's TLS block
+///   mov  OFF(%rax), %rax           ; <- the offset we want
+///
+/// Reading it from the accessor means we do not depend on the runtime having
+/// published `_swift_concurrency_debug_currentTaskTLSOffset` (which older
+/// runtimes lack, and newer ones only fill in once a task has run).
+///
+/// Returns std::nullopt when the pattern is not recognized, in which case the
+/// caller should treat the offset as unavailable rather than guess.
+static std::optional<uint64_t>
+ReadTaskSlotOffsetFromGetCurrent(Process &process, Module &concurrency_module) {
+  const Symbol *sym = concurrency_module.FindFirstSymbolWithNameAndType(
+      ConstString("swift_task_getCurrent"), lldb::eSymbolTypeCode);
+  if (!sym)
+    return std::nullopt;
+
+  Address func_addr = sym->GetAddress();
+  if (!func_addr.IsValid())
+    return std::nullopt;
+
+  // The accessor is a handful of instructions; 32 bytes covers it.
+  uint8_t buf[32] = {};
+  Status error;
+  const size_t size = process.ReadMemory(
+      func_addr.GetLoadAddress(&process.GetTarget()), buf, sizeof(buf), error);
+  if (error.Fail() || size < sizeof(buf))
+    return std::nullopt;
+
+  // Look for the trailing `mov <disp>(%rax), %rax`, i.e. REX.W 8B 80/40/00
+  // with rax as both base and destination:
+  //   48 8b 00      -> disp 0
+  //   48 8b 40 XX   -> disp8
+  //   48 8b 80 XXXXXXXX -> disp32
+  for (size_t i = 0; i + 2 < sizeof(buf); ++i) {
+    if (buf[i] != 0x48 || buf[i + 1] != 0x8b)
+      continue;
+    const uint8_t modrm = buf[i + 2];
+    // reg field (bits 5:3) == rax == 0, r/m field (bits 2:0) == rax == 0.
+    if (((modrm >> 3) & 0x7) != 0 || (modrm & 0x7) != 0)
+      continue;
+    switch (modrm >> 6) {
+    case 0x0: // no displacement
+      return 0;
+    case 0x1: // disp8
+      if (i + 3 < sizeof(buf))
+        return buf[i + 3];
+      return std::nullopt;
+    case 0x2: // disp32
+      if (i + 6 < sizeof(buf))
+        return llvm::support::endian::read32le(&buf[i + 3]);
+      return std::nullopt;
+    default: // register form, not a load
+      break;
+    }
+  }
+  return std::nullopt;
+}
+
+/// Finds tasks on runtimes that keep the current-task pointer in a C++
+/// `thread_local` (Windows, Linux). See
+/// CurrentTaskStorageKind::cxx_thread_local.
+///
+/// Currently implemented for Windows, where the concurrency library's
+/// thread-local block is reached through the TEB:
+///
+///   task_slot = *(TEB->ThreadLocalStoragePointer + _tls_index * ptr_size)
+///               + _swift_concurrency_debug_currentTaskTLSOffset
+///
+/// This mirrors what the runtime's own `swift_task_getCurrent` compiles to.
+/// Neither `_tls_index` nor the in-block offset can be hardcoded: the former
+/// is assigned per image at load time, the latter by the linker.
+struct CxxThreadLocalTaskFinder : CachingTaskFinder {
+  llvm::Expected<lldb::addr_t>
+  ComputeTaskAddrLocation(Thread &real_thread) override;
+};
+
+llvm::Expected<addr_t>
+CxxThreadLocalTaskFinder::ComputeTaskAddrLocation(Thread &real_thread) {
+  Process &process = *real_thread.GetProcess();
+  const llvm::Triple &triple =
+      process.GetTarget().GetArchitecture().GetTriple();
+  if (!triple.isOSWindows())
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: thread-local task storage is only "
+        "implemented for Windows");
+
+  ModuleSP concurrency_module =
+      SwiftLanguageRuntime::FindConcurrencyModule(process);
+  if (!concurrency_module)
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: could not find the _Concurrency module");
+
+  // Offset of the task pointer within the concurrency library's TLS block.
+  // The runtime publishes this because the linker assigns it. It stays zero
+  // until the process has actually run a task.
+  const Symbol *offset_symbol =
+      concurrency_module->FindFirstSymbolWithNameAndType(
+          ConstString("_swift_concurrency_debug_currentTaskTLSOffset"));
+  if (!offset_symbol)
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: the runtime does not export "
+        "_swift_concurrency_debug_currentTaskTLSOffset");
+
+  size_t ptr_size = process.GetAddressByteSize();
+  addr_t offset_addr = offset_symbol->GetLoadAddress(&process.GetTarget());
+  if (offset_addr == LLDB_INVALID_ADDRESS)
+    return llvm::createStringError("CxxThreadLocalTaskFinder: could not "
+                                   "resolve the task TLS offset symbol");
+
+  Status error;
+  uint64_t task_offset_in_block = process.ReadUnsignedIntegerFromMemory(
+      offset_addr, ptr_size, /*fail_value=*/0, error);
+  if (error.Fail())
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: could not read the task TLS offset: %s",
+        error.AsCString());
+  // Older runtimes do not export the offset, and even on newer ones it is
+  // published lazily. Fall back to reading it out of `swift_task_getCurrent`,
+  // whose whole body is the very lookup we are emulating: its final
+  // `mov <off>(%rax), %rax` encodes the slot's offset within the TLS block.
+  if (task_offset_in_block == 0)
+    if (auto off = ReadTaskSlotOffsetFromGetCurrent(process,
+                                                    *concurrency_module))
+      task_offset_in_block = *off;
+
+  // Index of the concurrency library's slot in the TEB's TLS array.
+  const Symbol *tls_index_symbol =
+      concurrency_module->FindFirstSymbolWithNameAndType(
+          ConstString("_tls_index"));
+  if (!tls_index_symbol)
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: the concurrency module has no _tls_index");
+
+  addr_t tls_index_addr = tls_index_symbol->GetLoadAddress(&process.GetTarget());
+  if (tls_index_addr == LLDB_INVALID_ADDRESS)
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: could not resolve _tls_index");
+
+  uint64_t tls_index = process.ReadUnsignedIntegerFromMemory(
+      tls_index_addr, /*width=*/4, /*fail_value=*/UINT64_MAX, error);
+  if (error.Fail() || tls_index == UINT64_MAX)
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: could not read _tls_index");
+
+  // The TEB address, published by the Windows process plugin.
+  addr_t teb_addr = LLDB_INVALID_ADDRESS;
+  if (auto info_sp = real_thread.GetExtendedInfo())
+    if (auto *info_dict = info_sp->GetAsDictionary())
+      info_dict->GetValueForKeyAsInteger("teb_address", teb_addr);
+  if (teb_addr == LLDB_INVALID_ADDRESS)
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: the thread does not expose a TEB address");
+
+  // TEB::ThreadLocalStoragePointer. The TEB layout is stable and documented;
+  // 32-bit Windows puts the field at a different offset.
+  const uint64_t tls_pointer_offset_in_teb = triple.isArch32Bit() ? 0x2c : 0x58;
+  addr_t tls_array = process.ReadPointerFromMemory(
+      teb_addr + tls_pointer_offset_in_teb, error);
+  if (error.Fail() || tls_array == 0 || tls_array == LLDB_INVALID_ADDRESS)
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: could not read ThreadLocalStoragePointer "
+        "at 0x%" PRIx64,
+        teb_addr + tls_pointer_offset_in_teb);
+
+  addr_t tls_block =
+      process.ReadPointerFromMemory(tls_array + tls_index * ptr_size, error);
+  if (error.Fail() || tls_block == 0 || tls_block == LLDB_INVALID_ADDRESS)
+    return llvm::createStringError(
+        "CxxThreadLocalTaskFinder: the concurrency library has no TLS block "
+        "on this thread");
+
+  return tls_block + task_offset_in_block;
+}
+
 /// Lightweight wrapper around TaskStatusRecord pointers, providing:
 ///   * traversal over the embedded linnked list of status records
 ///   * information contained within records
@@ -4333,6 +4515,7 @@ GetTaskFinder(std::optional<CurrentTaskStorageKind> storage_kind) {
   case CurrentTaskStorageKind::pthread_reserved_key:
     return std::make_unique<PthreadReservedKeyTaskFinder>();
   case CurrentTaskStorageKind::cxx_thread_local:
+    return std::make_unique<CxxThreadLocalTaskFinder>();
   case CurrentTaskStorageKind::pthread_allocated_key:
   case CurrentTaskStorageKind::global:
   case CurrentTaskStorageKind::last:
