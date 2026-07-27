@@ -32,6 +32,27 @@ using namespace lldb_private;
 using GetThreadDescriptionFunctionPtr =
     HRESULT(WINAPI *)(HANDLE hThread, PWSTR *ppszThreadDescription);
 
+// Enough of NTSTATUS/THREAD_BASIC_INFORMATION to ask ntdll for a thread's TEB
+// address. These are not exposed by the SDK headers we include here.
+using NtQueryInformationThreadFunctionPtr = LONG(WINAPI *)(
+    HANDLE ThreadHandle, ULONG ThreadInformationClass,
+    PVOID ThreadInformation, ULONG ThreadInformationLength,
+    PULONG ReturnLength);
+
+namespace {
+struct ThreadBasicInformation {
+  LONG ExitStatus;
+  PVOID TebBaseAddress;
+  struct {
+    HANDLE UniqueProcess;
+    HANDLE UniqueThread;
+  } ClientId;
+  ULONG_PTR AffinityMask;
+  LONG Priority;
+  LONG BasePriority;
+};
+} // namespace
+
 TargetThreadWindows::TargetThreadWindows(ProcessWindows &process,
                                          const HostThread &thread)
     : Thread(process, thread.GetNativeThread().GetThreadId()),
@@ -46,6 +67,39 @@ void TargetThreadWindows::RefreshStateAfterStop() {
 }
 
 void TargetThreadWindows::WillResume(lldb::StateType resume_state) {}
+
+StructuredData::ObjectSP TargetThreadWindows::FetchThreadExtendedInfo() {
+  // Publish this thread's TEB address. Language runtimes need it to resolve
+  // thread-local storage (Swift's concurrency runtime, for instance, keeps the
+  // currently-executing task in a `thread_local`, reached through the TEB's
+  // ThreadLocalStoragePointer). This mirrors the "tsd_address" key that the
+  // Darwin thread plugin provides for the same purpose.
+  static NtQueryInformationThreadFunctionPtr NtQueryInformationThread = []() {
+    HMODULE hModule = ::LoadLibraryW(L"ntdll.dll");
+    return hModule ? reinterpret_cast<NtQueryInformationThreadFunctionPtr>(
+                         (void *)::GetProcAddress(hModule,
+                                                  "NtQueryInformationThread"))
+                   : nullptr;
+  }();
+  if (!NtQueryInformationThread)
+    return StructuredData::ObjectSP();
+
+  HANDLE handle = m_host_thread.GetNativeThread().GetSystemHandle();
+  if (!handle || handle == INVALID_HANDLE_VALUE)
+    return StructuredData::ObjectSP();
+
+  ThreadBasicInformation info = {};
+  // ThreadBasicInformation == 0.
+  if (NtQueryInformationThread(handle, 0, &info, sizeof(info), nullptr) < 0)
+    return StructuredData::ObjectSP();
+  if (!info.TebBaseAddress)
+    return StructuredData::ObjectSP();
+
+  auto dict = std::make_shared<StructuredData::Dictionary>();
+  dict->AddIntegerItem("teb_address",
+                       reinterpret_cast<uint64_t>(info.TebBaseAddress));
+  return dict;
+}
 
 void TargetThreadWindows::DidStop() {}
 
