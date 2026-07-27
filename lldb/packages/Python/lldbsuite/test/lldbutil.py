@@ -2046,6 +2046,20 @@ def ignore_swift_stdlib_when_stepping(platform, tester):
             "target.process.thread.step-avoid-libraries {}".format(lib_name)
         )
 
+def ignore_swift_concurrency_when_stepping(platform, tester):
+        system = platform.system()
+        if system == "Darwin":
+            lib_name = "libswift_Concurrency.dylib"
+        elif system == "Windows":
+            lib_name = "swift_Concurrency.dll"
+        else:
+            lib_name = "libswift_Concurrency.so"
+
+        tester.dbg.HandleCommand(
+            "settings set "
+            "target.process.thread.step-avoid-libraries {}".format(lib_name)
+        )
+
 # Binary escapes `packet_str`, sends it to the remote and returns the reply.
 def send_packet_get_reply(test, packet_str):
     packet_str = escape_binary(packet_str)
