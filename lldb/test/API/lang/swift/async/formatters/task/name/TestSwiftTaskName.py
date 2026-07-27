@@ -18,7 +18,8 @@ class TestCase(TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
-    @skipIfWindows # rdar://176009590
+    @skipIfWindows # rdar://176009590: needs the concurrency runtime to publish
+                   # its current-task storage kind (layout version 3).
     @skipIfLinux  # rdar://151471067
     def test_thread_contains_name(self):
         self.build()

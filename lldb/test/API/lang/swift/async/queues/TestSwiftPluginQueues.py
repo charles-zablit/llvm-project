@@ -8,6 +8,9 @@ import re
 class TestCase(lldbtest.TestBase):
     @skipEmbeddedSwift
     @swiftTest
+    # The Swift task plugin itself works on Windows (virtual "Task N" threads are
+    # created and selected), but this test additionally asserts that every thread
+    # reports a libdispatch queue name, which Windows has no equivalent for.
     @skipIf(oslist=["windows", "linux"])
     def test(self):
         """Test `frame variable` in async functions"""
