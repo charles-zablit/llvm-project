@@ -63,8 +63,11 @@ class TestCase(TestBase):
         self.runCmd(f"language swift task select {arg}")
         thread = process.GetSelectedThread()
 
+        # The concurrency runtime is libswift_Concurrency.{dylib,so} on
+        # Darwin/Linux but swift_Concurrency.dll on Windows, so match the part
+        # of the name that is common to all three.
         self.assertIn(
-            "libswift_Concurrency.", thread.GetSelectedFrame().module.file.basename
+            "swift_Concurrency.", thread.GetSelectedFrame().module.file.basename
         )
 
         frame_idx = -1
