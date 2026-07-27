@@ -170,12 +170,13 @@ Status ProcessWindows::DoDetach(bool keep_stopped) {
                  GetPrivateState());
 
         LLDB_LOG(log, "resuming {0} threads for detach.",
-                 m_thread_list.GetSize());
+                 m_thread_list_real.GetSize());
 
         bool failed = false;
-        for (uint32_t i = 0; i < m_thread_list.GetSize(); ++i) {
+        // See DoResume: resume the real OS threads.
+        for (uint32_t i = 0; i < m_thread_list_real.GetSize(); ++i) {
           auto thread = std::static_pointer_cast<TargetThreadWindows>(
-              m_thread_list.GetThreadAtIndex(i));
+              m_thread_list_real.GetThreadAtIndex(i));
           Status result = thread->DoResume();
           if (result.Fail()) {
             failed = true;
@@ -245,12 +246,16 @@ Status ProcessWindows::DoResume(RunDirection direction) {
              m_session_data->m_debugger->GetProcess().GetProcessId(),
              GetPrivateState());
 
-    LLDB_LOG(log, "resuming {0} threads.", m_thread_list.GetSize());
+    LLDB_LOG(log, "resuming {0} threads.", m_thread_list_real.GetSize());
 
     bool failed = false;
-    for (uint32_t i = 0; i < m_thread_list.GetSize(); ++i) {
+    // Resume the real OS threads. m_thread_list is what the user sees, which
+    // an OS plugin may have populated with virtual threads (Swift tasks, for
+    // instance); those are not TargetThreadWindows and have no OS thread of
+    // their own to resume.
+    for (uint32_t i = 0; i < m_thread_list_real.GetSize(); ++i) {
       auto thread = std::static_pointer_cast<TargetThreadWindows>(
-          m_thread_list.GetThreadAtIndex(i));
+          m_thread_list_real.GetThreadAtIndex(i));
       Status result = thread->DoResume();
       if (result.Fail()) {
         failed = true;
@@ -411,6 +416,14 @@ void ProcessWindows::RefreshStateAfterStop() {
   RegisterContextSP register_context = stop_thread->GetRegisterContext();
   uint64_t pc = register_context->GetPC();
 
+  // An OS plugin may have substituted a virtual thread (a Swift task, for
+  // instance) for the real one. Windows-specific state -- hardware breakpoint
+  // slots and the like -- lives on the real thread's register context, and
+  // only that one is a RegisterContextWindows.
+  ThreadSP real_stop_thread = stop_thread;
+  if (ThreadSP backing_thread = stop_thread->GetBackingThread())
+    real_stop_thread = backing_thread;
+
   // If we're at a BreakpointSite, mark this as an Unexecuted Breakpoint.
   // We'll clear that state if we've actually executed the breakpoint.
   BreakpointSiteSP site(GetBreakpointSiteList().FindByAddress(pc));
@@ -420,7 +433,7 @@ void ProcessWindows::RefreshStateAfterStop() {
   switch (active_exception->GetExceptionCode()) {
   case EXCEPTION_SINGLE_STEP: {
     auto *reg_ctx = static_cast<RegisterContextWindows *>(
-        stop_thread->GetRegisterContext().get());
+        real_stop_thread->GetRegisterContext().get());
     uint32_t slot_id = reg_ctx->GetTriggeredHardwareBreakpointSlotId();
     if (slot_id != LLDB_INVALID_INDEX32) {
       int id = m_watchpoint_ids[slot_id];
@@ -926,8 +939,11 @@ Status ProcessWindows::EnableWatchpoint(WatchpointSP wp_sp, bool notify) {
   info.read = wp_sp->WatchpointRead();
   info.write = wp_sp->WatchpointWrite() || wp_sp->WatchpointModify();
 
-  for (unsigned i = 0U; i < m_thread_list.GetSize(); i++) {
-    Thread *thread = m_thread_list.GetThreadAtIndex(i).get();
+  // Hardware breakpoint slots live on the real OS threads. m_thread_list is
+  // what the user sees, which an OS plugin may have populated with virtual
+  // threads whose register contexts are not RegisterContextWindows.
+  for (unsigned i = 0U; i < m_thread_list_real.GetSize(); i++) {
+    Thread *thread = m_thread_list_real.GetThreadAtIndex(i).get();
     auto *reg_ctx = static_cast<RegisterContextWindows *>(
         thread->GetRegisterContext().get());
     if (!reg_ctx->AddHardwareBreakpoint(info.slot_id, info.address, info.size,
@@ -939,8 +955,8 @@ Status ProcessWindows::EnableWatchpoint(WatchpointSP wp_sp, bool notify) {
     }
   }
   if (error.Fail()) {
-    for (unsigned i = 0U; i < m_thread_list.GetSize(); i++) {
-      Thread *thread = m_thread_list.GetThreadAtIndex(i).get();
+    for (unsigned i = 0U; i < m_thread_list_real.GetSize(); i++) {
+      Thread *thread = m_thread_list_real.GetThreadAtIndex(i).get();
       auto *reg_ctx = static_cast<RegisterContextWindows *>(
           thread->GetRegisterContext().get());
       reg_ctx->RemoveHardwareBreakpoint(info.slot_id);
@@ -971,8 +987,9 @@ Status ProcessWindows::DisableWatchpoint(WatchpointSP wp_sp, bool notify) {
     return error;
   }
 
-  for (unsigned i = 0U; i < m_thread_list.GetSize(); i++) {
-    Thread *thread = m_thread_list.GetThreadAtIndex(i).get();
+  // See EnableWatchpoint: hardware breakpoint slots live on the real threads.
+  for (unsigned i = 0U; i < m_thread_list_real.GetSize(); i++) {
+    Thread *thread = m_thread_list_real.GetThreadAtIndex(i).get();
     auto *reg_ctx = static_cast<RegisterContextWindows *>(
         thread->GetRegisterContext().get());
     if (!reg_ctx->RemoveHardwareBreakpoint(it->second.slot_id)) {
