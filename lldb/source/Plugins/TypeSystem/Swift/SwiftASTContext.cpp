@@ -142,6 +142,7 @@
 #include "Plugins/SymbolFile/DWARF/DWARFASTParserClang.h"
 #include "Plugins/TypeSystem/Clang/TypeSystemClang.h"
 
+#include <cstring>
 #include <iterator>
 #include <memory>
 #include <mutex>
@@ -156,6 +157,16 @@ std::recursive_mutex g_log_mutex;
 
 } // namespace
 
+/// MSVC's __FUNCTION__ is fully qualified (e.g. "lldb_private::Class::Method")
+/// whereas Clang/GCC expand it to just "Method". Return the unqualified name so
+/// LOG_PRINTF output is identical across host compilers (many tests FileCheck
+/// this log). On Clang/GCC there is no "::", so this is a no-op there.
+static const char *UnqualifiedFunctionName(const char *function_name) {
+  if (const char *last_colon = std::strrchr(function_name, ':'))
+    return last_colon + 1;
+  return function_name;
+}
+
 /// Similar to LLDB_LOG, but with richer contextual information.
 #define LOG_PRINTF(CHANNEL, FMT, ...)                                          \
   LOG_PRINTF_IMPL(CHANNEL, false, FMT, ##__VA_ARGS__)
@@ -169,7 +180,8 @@ std::recursive_mutex g_log_mutex;
       if (!(VERBOSE) || log->GetVerbose()) {                                   \
         std::lock_guard<std::recursive_mutex> locker(g_log_mutex);             \
         /* The format string is optimized for code size, not speed. */         \
-        log->Printf("%s::%s%s" FMT, m_description.c_str(), __FUNCTION__,       \
+        log->Printf("%s::%s%s" FMT, m_description.c_str(),                     \
+                    UnqualifiedFunctionName(__FUNCTION__),                     \
                     (FMT && FMT[0] == '(') ? "" : "() -- ", ##__VA_ARGS__);    \
       }                                                                        \
   } while (0)
