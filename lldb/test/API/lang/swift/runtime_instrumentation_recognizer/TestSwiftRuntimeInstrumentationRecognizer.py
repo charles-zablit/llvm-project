@@ -7,6 +7,11 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftRuntimeInstrumentationRecognizer(lldbtest.TestBase):
     @skipEmbeddedSwift
     @swiftTest
+    # The frame recognizer is registered and the stop reason is correct, but
+    # frame 0 is Swift._isStdlibInternalChecksEnabled() under
+    # Swift._assertionFailure, not _swift_runtime_on_report: the Windows
+    # runtime does not route the trap through the instrumentation reporting
+    # hook, so there is no instrumentation frame to recognize.
     @expectedFailureWindows
     def test(self):
         """Test Swift Runtime Instrumentation Recognizer"""
