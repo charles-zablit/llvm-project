@@ -14,7 +14,6 @@ def _tail(output):
 class TestCase(TestBase):
 
     @skipEmbeddedSwift
-    @skipUnlessDarwin
     @swiftTest
     def test_compare_printed_task_variable_to_task_info(self):
         """Compare the output of a printed Task to the output of `task info`."""
@@ -29,7 +28,6 @@ class TestCase(TestBase):
         self.assertEqual(_tail(task_info_output), _tail(frame_variable_output))
 
     @skipEmbeddedSwift
-    @skipUnlessDarwin
     @swiftTest
     def test_compare_printed_task_variable_to_task_info_with_address(self):
         """Compare the output of a printed Task to the output of `task info <address>`."""

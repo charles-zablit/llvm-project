@@ -8,7 +8,6 @@ class TestSwiftExplicitModules(lldbtest.TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
-    @skipUnlessDarwin
     def test_import(self):
         """Test an implicit import inside an explicit build"""
         mod_cache = self.getBuildArtifact("my-clang-modules-cache")
