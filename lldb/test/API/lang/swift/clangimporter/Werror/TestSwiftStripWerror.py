@@ -10,7 +10,6 @@ class TestSwiftWerror(TestBase):
     @skipEmbeddedSwift
     # Don't run ClangImporter tests if Clangimporter is disabled.
     @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
-    @skipUnlessDarwin
     @swiftTest
     def test(self):
         """This tests that -Werror is removed from ClangImporter options by

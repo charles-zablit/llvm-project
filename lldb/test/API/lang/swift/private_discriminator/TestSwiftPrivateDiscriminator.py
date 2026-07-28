@@ -14,7 +14,6 @@ class TestSwiftPrivateDiscriminator(lldbtest.TestBase):
     # FIXME: The only reason this doesn't work on Linux is because the
     # dylib hasn't been loaded when run_to_source_breakpoint wants to
     # set the breakpoints.
-    @skipUnlessDarwin
     def test(self):
         """Test what happens when a private type cannot be reconstructed in the AST."""
         self.build()
