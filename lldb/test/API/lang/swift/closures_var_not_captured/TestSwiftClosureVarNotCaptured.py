@@ -112,7 +112,7 @@ class TestSwiftClosureVarNotCaptured(TestBase):
     @skipEmbeddedSwift
     @swiftTest
     # Async variable inspection on Linux/Windows are still problematic.
-    @skipIf(oslist=["windows", "linux"])
+    @skipIf(oslist=["linux"])
     def test_task_inside_non_async_func(self):
         self.build()
         (target, process, thread) = self.get_to_bkpt(
