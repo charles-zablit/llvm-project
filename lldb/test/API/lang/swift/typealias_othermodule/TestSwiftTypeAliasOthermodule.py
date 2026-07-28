@@ -3,7 +3,6 @@ from lldbsuite.test.decorators import *
 import lldbsuite.test.lldbutil as lldbutil
 
 
-@skipIfWindows  # rdar://177523573
 class TestSwiftTypeAliasOtherModule(TestBase):
     NO_DEBUG_INFO_TESTCASE = True
 
@@ -21,6 +20,12 @@ class TestSwiftTypeAliasOtherModule(TestBase):
 
     @skipEmbeddedSwift
     @swiftTest
+    # rdar://177523573: the typealias itself resolves (the result is correctly
+    # typed Dylib.Impl.Payload), but the expression evaluator yields the
+    # underlying storage -- "(_value = 1)" -- rather than running it through
+    # the Bool formatter, so the printed value never matches. `frame variable`
+    # on the same expression is fine.
+    @skipIfWindows
     def test_expression(self):
         """Test that type aliases can be imported into expressions from reflection metadata"""
         self.build()
