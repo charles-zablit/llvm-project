@@ -6,7 +6,6 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftObjCBaseClassMemberLookup(TestBase):
     NO_DEBUG_INFO_TESTCASE = True
     @skipEmbeddedSwift
-    @skipUnlessDarwin
     @swiftTest
     def test(self):
         """Test accessing a static member from a member function"""

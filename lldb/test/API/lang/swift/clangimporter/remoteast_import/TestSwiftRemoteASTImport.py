@@ -20,7 +20,6 @@ class TestSwiftRemoteASTImport(TestBase):
     @skipEmbeddedSwift
     # Don't run ClangImporter tests if Clangimporter is disabled.
     @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
-    @skipUnlessDarwin
     @swiftTest
     def testSwiftRemoteASTImport(self):
         """This tests that RemoteAST querying the dynamic type of a variable

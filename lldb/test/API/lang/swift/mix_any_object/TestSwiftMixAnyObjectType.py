@@ -21,7 +21,6 @@ import os
 
 class TestSwiftMixAnyObjectType(TestBase):
     @skipEmbeddedSwift
-    @skipUnlessDarwin
     @swiftTest
     def test_any_object_type(self):
         """Test the AnyObject type in different combinations"""
