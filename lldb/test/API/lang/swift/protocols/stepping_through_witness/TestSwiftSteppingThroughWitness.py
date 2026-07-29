@@ -1,4 +1,5 @@
 import lldb
+import platform
 from lldbsuite.test.lldbtest import *
 from lldbsuite.test.decorators import *
 import lldbsuite.test.lldbutil as lldbutil
@@ -10,9 +11,7 @@ class TestSwiftSteppingThroughWitness(TestBase):
 
     def setUp(self):
         TestBase.setUp(self)
-        self.runCmd(
-            "settings set target.process.thread.step-avoid-libraries libswift_Concurrency.dylib"
-        )
+        lldbutil.ignore_swift_concurrency_when_stepping(platform, self)
 
     @skipEmbeddedSwift
     @swiftTest
