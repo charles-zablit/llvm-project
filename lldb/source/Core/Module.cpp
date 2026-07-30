@@ -1336,6 +1336,21 @@ void Module::FindSymbolsMatchingRegExAndType(
 }
 
 void Module::PreloadSymbols() {
+  // Preloading only front-loads work that a later lookup would do anyway, so it
+  // never needs to happen more than once, and a caller that finds it already
+  // under way can simply move on.
+  //
+  // Bailing out early is also what keeps this from deadlocking.  A Module is
+  // shared between targets, so several threads can ask to preload the same one
+  // concurrently.  SymbolFile::PreloadSymbols() waits on the thread pool, and
+  // llvm::ThreadPool::wait() called from a pool worker runs other queued tasks
+  // to make progress -- one of which can be another preload request for this
+  // very module.  That nested request would re-enter the std::call_once in
+  // ManualDWARFIndex::Index() on the thread that is already inside it, which
+  // deadlocks.
+  if (m_did_preload_symbols.exchange(true))
+    return;
+
   LockedPtr<SymbolFile> sym_file = GetSymbolFileLocked();
   if (!sym_file)
     return;
@@ -1409,6 +1424,8 @@ void Module::SetSymbolFileFileSpec(const FileSpec &file) {
   m_symfile_spec = file;
   m_symfile_up.reset();
   m_did_load_symfile = false;
+  // The new symbol file has not been preloaded yet.
+  m_did_preload_symbols = false;
 }
 
 bool Module::IsExecutable() {
