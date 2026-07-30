@@ -203,7 +203,7 @@ Status DebuggerThread::StopDebugging(bool terminate) {
   // breakpoint messing around in the debugger), continue it now.  But only
   // AFTER calling TerminateProcess to make sure that the very next call to
   // WaitForDebugEventEx is an exit process event.
-  if (m_active_exception.get()) {
+  if (GetActiveException()) {
     LLDB_LOG(log, "masking active exception");
     ContinueAsyncException(ExceptionResult::MaskException);
   }
@@ -239,15 +239,23 @@ Status DebuggerThread::StopDebugging(bool terminate) {
   return error;
 }
 
+ExceptionRecordSP DebuggerThread::GetActiveException() {
+  std::lock_guard<std::mutex> guard(m_active_exception_mutex);
+  return m_active_exception;
+}
+
 void DebuggerThread::ContinueAsyncException(ExceptionResult result) {
-  if (!m_active_exception.get())
-    return;
+  {
+    std::lock_guard<std::mutex> guard(m_active_exception_mutex);
+    if (!m_active_exception)
+      return;
+    m_active_exception.reset();
+  }
 
   Log *log = GetLog(WindowsLog::Process | WindowsLog::Exception);
   LLDB_LOG(log, "broadcasting for inferior process {0}.",
            m_process.GetProcessId());
 
-  m_active_exception.reset();
   m_exception_pred.SetValue(result, eBroadcastAlways);
 }
 
@@ -401,15 +409,38 @@ DebuggerThread::HandleExceptionEvent(const EXCEPTION_DEBUG_INFO &info,
 
   bool first_chance = (info.dwFirstChance != 0);
 
-  m_active_exception.reset(
-      new ExceptionRecord(info.ExceptionRecord, thread_id));
+  // Publish the exception and arm the predicate *before* running the delegate.
+  //
+  // OnDebugException() is what hands control of this stop to the thread driving
+  // the debugger (for the initial stop it signals m_initial_stop_event, which
+  // releases WaitForDebuggerConnection), so that thread can call
+  // ContinueAsyncException() at any point once we are inside it.  Arming first
+  // means such a call can only ever overwrite the predicate *after* us, so its
+  // wakeup is never lost -- previously it could land between the delegate
+  // returning and the SetValue() below, and we would then park here forever
+  // with the inferior frozen at its debug event.
+  //
+  // Keeping a local strong reference matters for the same reason: a concurrent
+  // ContinueAsyncException() clears m_active_exception, and the delegate is
+  // still using the record we passed it.
+  ExceptionRecordSP active_exception =
+      std::make_shared<ExceptionRecord>(info.ExceptionRecord, thread_id);
+  {
+    std::lock_guard<std::mutex> guard(m_active_exception_mutex);
+    m_active_exception = active_exception;
+  }
+  m_exception_pred.SetValue(ExceptionResult::BreakInDebugger, eBroadcastNever);
+
   LLDB_LOG(log, "encountered {0} chance exception {1:x} on thread {2:x}",
            first_chance ? "first" : "second",
            info.ExceptionRecord.ExceptionCode, thread_id);
 
   ExceptionResult result =
-      m_debug_delegate->OnDebugException(first_chance, *m_active_exception);
-  m_exception_pred.SetValue(result, eBroadcastNever);
+      m_debug_delegate->OnDebugException(first_chance, *active_exception);
+  // If the delegate dealt with the exception itself, continue it now.  This is
+  // a no-op if the other thread got there first, in which case its result wins.
+  if (result != ExceptionResult::BreakInDebugger)
+    ContinueAsyncException(result);
 
   LLDB_LOG(log, "waiting for ExceptionPred != BreakInDebugger");
   result = *m_exception_pred.WaitForValueNotEqualTo(
