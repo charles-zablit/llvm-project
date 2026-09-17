@@ -866,43 +866,14 @@ static bool hasNonLocalAlias(const Function *F) {
   return false;
 }
 
-/// COFF names a local alias target's fallback symbol after unrelated contents
-/// of the object, so two objects defining the alias disagree (LNK1227).
-static bool needsStableSymbolForAlias(const Function *F) {
-  return F->getParent()->getTargetTriple().isOSBinFormatCOFF();
-}
-
-/// Prefix of the name tryConvertToMergedFunction gives a shared body.
-static constexpr StringRef MergedFunctionPrefix = "__llvm_mergefunc$";
-
-/// Names \p F after its contents and puts it in a COMDAT, so every object
-/// merging this body agrees on it.
-static bool tryConvertToMergedFunction(Function *F) {
-  // The ODR path aliases both halves of a merge to the same body.
-  if (F->getName().starts_with(MergedFunctionPrefix))
+/// A COFF weak external has to name the symbol it resolves to. A local aliasee
+/// has no such name, so WinCOFFWriter::setWeakDefaultNames() invents
+/// `.weak.<name>.default.<an arbitrary external symbol of the object>`. Two
+/// objects defining the alias pick different symbols and disagree (LNK1227).
+static bool canBeAliasee(const Function *F) {
+  if (!F->getParent()->getTargetTriple().isOSBinFormatCOFF())
     return true;
-
-  // An externally visible name is fixed; the ODR path passes a nameless body.
-  if (F->hasName() && !F->hasLocalLinkage())
-    return false;
-
-  Module *M = F->getParent();
-  std::string Name =
-      (MergedFunctionPrefix +
-       Twine::utohexstr(StructuralHash(*F, /*DetailedHash=*/true)))
-          .str();
-  // A uniquing suffix would be numbered per object, so it cannot be used.
-  if (M->getNamedValue(Name))
-    return false;
-
-  F->setName(Name);
-  F->setLinkage(GlobalValue::LinkOnceODRLinkage);
-  F->setDLLStorageClass(GlobalValue::DefaultStorageClass);
-  Comdat *C = M->getOrInsertComdat(Name);
-  // Reject a hash collision at link time rather than keep either body.
-  C->setSelectionKind(Comdat::ExactMatch);
-  F->setComdat(C);
-  return true;
+  return F->hasName() && !F->hasLocalLinkage();
 }
 
 // Replace G with an alias to F (deleting function G)
@@ -963,9 +934,7 @@ bool MergeFunctions::eraseIfUnused(Function *G) {
 }
 
 bool MergeFunctions::createAlias(Function *F, Function *G) {
-  if (!canCreateAliasFor(G))
-    return false;
-  if (needsStableSymbolForAlias(F) && !tryConvertToMergedFunction(F))
+  if (!canCreateAliasFor(G) || !canBeAliasee(F))
     return false;
   writeAlias(F, G);
   return true;
@@ -1208,9 +1177,7 @@ void MergeFunctions::mergeTwoFunctions(Function *F, Function *G) {
     // be merged.
     if (!eraseIfUnused(NewF) && !createAlias(F, NewF))
       createThunk(F, NewF);
-    // A COMDAT here is tryConvertToMergedFunction's; F's moved to NewF above.
-    if (!F->hasComdat())
-      F->setLinkage(GlobalValue::PrivateLinkage);
+    F->setLinkage(GlobalValue::PrivateLinkage);
 
     if (NewFAlign || GAlign)
       F->setAlignment(std::max(NewFAlign.valueOrOne(), GAlign.valueOrOne()));
@@ -1224,12 +1191,10 @@ void MergeFunctions::mergeTwoFunctions(Function *F, Function *G) {
     if (!G->isInterposable() && !MergeFunctionsPDI) {
       // Functions referred to by llvm.used/llvm.compiler.used are special:
       // there are uses of the symbol name that are not visible to LLVM,
-      // usually from inline asm. An alias visible to other objects is about to
-      // name F, so keep G unless F can take a symbol they agree on.
-      const bool CanRetargetAlias = !needsStableSymbolForAlias(F) ||
-                                    !hasNonLocalAlias(G) ||
-                                    tryConvertToMergedFunction(F);
-      if (G->hasGlobalUnnamedAddr() && !Used.contains(G) && CanRetargetAlias) {
+      // usually from inline asm. Replacing G also points any alias of G at F,
+      // so keep G when F cannot be an aliasee.
+      if (G->hasGlobalUnnamedAddr() && !Used.contains(G) &&
+          (!hasNonLocalAlias(G) || canBeAliasee(F))) {
         // G might have been a key in our GlobalNumberState, and it's illegal
         // to replace a key in ValueMap<GlobalValue *> with a non-global.
         GlobalNumbers.erase(G);
