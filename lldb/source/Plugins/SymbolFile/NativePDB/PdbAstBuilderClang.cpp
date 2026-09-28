@@ -1297,11 +1297,27 @@ clang::FunctionDecl *PdbAstBuilderClang::CreateFunctionDecl(
     }
 
     if (!function_decl) {
+      // Clang lists every member the user declared in the field list, so a
+      // constructor, destructor or assignment operator that is only known from
+      // its S_GPROC32 is implicit, like the default constructor of
+      // `struct S { int i = 0; };`. Skip it as SymbolFileDWARF skips
+      // DW_AT_artificial members and let Sema declare it: as a user-provided
+      // constructor it would make S non-trivial for the MSVC ABI, and
+      // expressions would expect `S f()` to return S through a hidden pointer
+      // instead of in RAX.
+      llvm::StringRef record_name =
+          llvm::cast<clang::NamedDecl>(parent)->getName();
+      llvm::StringRef tag_name =
+          MSVCUndecoratedNameParser::DropScope(tag_record.Name);
+      llvm::StringRef special_name = func_name;
+      special_name.consume_front("~");
+      bool is_artificial = special_name == record_name ||
+                           special_name == tag_name || func_name == "operator=";
       function_decl = m_clang.AddMethodToCXXRecordType(
           parent_opaque_ty, func_name, asm_label, func_ct,
           /*is_virtual=*/false, /*is_static=*/false,
           /*is_inline=*/false, /*is_explicit=*/false,
-          /*is_attr_used=*/false, /*is_artificial=*/false);
+          /*is_attr_used=*/false, is_artificial);
     }
     m_cxx_record_map[parent_opaque_ty].insert({func_name, func_ct});
   } else {
