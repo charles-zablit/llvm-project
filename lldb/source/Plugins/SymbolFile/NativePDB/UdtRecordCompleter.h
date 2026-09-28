@@ -132,6 +132,9 @@ public:
 
 private:
   Record m_record;
+  /// Zero-length array members, like `char data[0]`. They can't take part in
+  /// reconstructing the layout from the member offsets.
+  std::vector<MemberUP> m_zero_size_members;
   clang::QualType AddBaseClassForTypeIndex(
       llvm::codeview::TypeIndex ti, llvm::codeview::MemberAccess access,
       std::optional<uint64_t> vtable_idx = std::optional<uint64_t>());

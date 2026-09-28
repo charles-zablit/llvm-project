@@ -308,8 +308,14 @@ Error UdtRecordCompleter::visitKnownMember(CVMemberRecord &cvr,
   lldb::AccessType access = TranslateMemberAccess(data_member.getAccess());
   size_t field_size =
       bitfield_width ? bitfield_width : GetSizeOfType(ti, m_index.tpi()) * 8;
-  if (field_size == 0)
+  if (field_size == 0) {
+    // Keep zero-length arrays. Other members without a size have a type that
+    // couldn't be completed.
+    if (member_qt->isArrayType())
+      m_zero_size_members.push_back(std::make_unique<Member>(
+          data_member.Name, offset, 0, member_qt, access, 0, m_member_index));
     return Error::success();
+  }
   m_record.CollectMember(data_member.Name, offset, field_size, member_qt,
                          access, bitfield_width, m_member_index);
   return Error::success();
@@ -469,9 +475,22 @@ void UdtRecordCompleter::FinishRecord() {
   m_record.ConstructRecord();
   // Maybe we should check the construsted record size with the size in pdb. If
   // they mismatch, it might be pdb has fields info missing.
+  uint64_t end_offset = 0;
   for (const auto &field : m_record.record.fields) {
     AddMember(clang, field.get(), field->bit_offset, m_derived_ct, m_layout,
              decl_ctx);
+    end_offset = std::max(end_offset, field->bit_offset + field->bit_size);
+  }
+
+  // A zero-length array is usually a flexible array member at the end of the
+  // record. Anywhere else it would have to be placed between the members of
+  // the reconstructed layout, so leave it out.
+  for (const auto &field : m_zero_size_members) {
+    if (field->bit_offset < end_offset)
+      continue;
+    AddMember(clang, field.get(), field->bit_offset, m_derived_ct, m_layout,
+              decl_ctx);
+    end_offset = field->bit_offset;
   }
 }
 
