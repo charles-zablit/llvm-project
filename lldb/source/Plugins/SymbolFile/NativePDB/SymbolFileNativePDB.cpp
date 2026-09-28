@@ -1127,15 +1127,19 @@ VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
       module_sp, MakeGlobalLocationExpression(section, offset, module_sp),
       nullptr);
 
-  std::string global_name("::");
-  global_name += name;
+  // Like DWARF's linkage name, the public symbol is the variable's mangled
+  // name. Variables with internal linkage don't have one.
+  llvm::StringRef mangled_name =
+      FindMangledSymbol(SegmentOffset(section, offset)).value_or("");
+  if (!Mangled::IsMangledName(mangled_name))
+    mangled_name = {};
   bool artificial = false;
   bool location_is_constant_data = false;
   bool static_member = false;
   VariableSP var_sp = std::make_shared<Variable>(
-      toOpaqueUid(var_id), name.str().c_str(), global_name.c_str(), type_sp,
-      scope, comp_unit.get(), ranges, &decl, location, is_external, artificial,
-      location_is_constant_data, static_member);
+      toOpaqueUid(var_id), name.str().c_str(), mangled_name.str().c_str(),
+      type_sp, scope, comp_unit.get(), ranges, &decl, location, is_external,
+      artificial, location_is_constant_data, static_member);
 
   return var_sp;
 }
