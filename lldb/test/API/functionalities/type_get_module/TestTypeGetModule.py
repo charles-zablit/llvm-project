@@ -10,6 +10,8 @@ import lldbsuite.test.lldbutil as lldbutil
 
 
 class TestTypeGetModule(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def find_module(self, target, name):
         num_modules = target.GetNumModules()
         index = 0

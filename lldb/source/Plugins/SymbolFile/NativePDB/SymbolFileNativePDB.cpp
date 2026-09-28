@@ -3221,7 +3221,59 @@ bool SymbolFileNativePDB::CompleteType(CompilerType &compiler_type) {
 
 void SymbolFileNativePDB::GetTypes(lldb_private::SymbolContextScope *sc_scope,
                                    TypeClass type_mask,
-                                   lldb_private::TypeList &type_list) {}
+                                   lldb_private::TypeList &type_list) {
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
+
+  llvm::DenseSet<lldb_private::Type *> added;
+  auto add = [&](lldb_private::Type *type) {
+    if (!type || !added.insert(type).second)
+      return;
+    if (type_mask != eTypeClassAny &&
+        !(type->GetForwardCompilerType().GetTypeClass() & type_mask))
+      return;
+    type_list.Insert(type->shared_from_this());
+  };
+
+  CompileUnit *comp_unit =
+      sc_scope ? sc_scope->CalculateSymbolContextCompileUnit() : nullptr;
+  if (!comp_unit) {
+    // All the types of the module: the definitions of the tag types, and the
+    // typedefs.
+    BuildParentMap();
+    LazyRandomTypeCollection &types = m_index->tpi().typeCollection();
+    for (auto ti = types.getFirst(); ti; ti = types.getNext(*ti)) {
+      CVType cvt = types.getType(*ti);
+      if (IsTagRecord(cvt) && !IsForwardRefUdt(cvt))
+        add(GetOrCreateType(*ti).get());
+    }
+    std::vector<uint32_t> typedefs;
+    m_typedef_base_names.GetValues(RegularExpression(llvm::StringRef(".*")),
+                                   typedefs);
+    for (uint32_t gid : typedefs)
+      add(GetOrCreateTypedef(PdbGlobalSymId{gid, false}).get());
+    return;
+  }
+
+  // Types aren't owned by a compile unit in a PDB, so report the types that
+  // the compile unit uses for its variables.
+  auto add_variables = [&](const VariableList &vars) {
+    for (const VariableSP &var : vars)
+      add(var->GetType());
+  };
+  if (VariableListSP globals = comp_unit->GetVariableList(true))
+    add_variables(*globals);
+
+  ParseFunctions(*comp_unit);
+  comp_unit->ForeachFunction([&](const FunctionSP &func) {
+    VariableList locals;
+    func->GetBlock(true).AppendBlockVariables(
+        /*can_create=*/true, /*get_child_block_variables=*/true,
+        /*stop_if_child_block_is_inlined_function=*/false,
+        [](Variable *) { return true; }, &locals);
+    add_variables(locals);
+    return false;
+  });
+}
 
 CompilerDeclContext
 SymbolFileNativePDB::FindNamespace(ConstString name,
