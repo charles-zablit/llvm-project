@@ -10,6 +10,8 @@ import lldbsuite.test.lldbutil as lldbutil
 
 
 class TestBreakpointLanguage(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def check_location_file(self, bp, loc, test_name):
         bp_loc = bp.GetLocationAtIndex(loc)
         addr = bp_loc.GetAddress()
