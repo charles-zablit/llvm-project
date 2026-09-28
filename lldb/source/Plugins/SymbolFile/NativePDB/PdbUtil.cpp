@@ -1123,7 +1123,8 @@ size_t lldb_private::npdb::GetTypeSizeForSimpleKind(SimpleTypeKind kind) {
 }
 
 PdbTypeSymId lldb_private::npdb::GetBestPossibleDecl(PdbTypeSymId id,
-                                                     TpiStream &tpi) {
+                                                     PdbIndex &index) {
+  TpiStream &tpi = index.tpi();
   if (id.index.isSimple())
     return id;
 
@@ -1138,7 +1139,7 @@ PdbTypeSymId lldb_private::npdb::GetBestPossibleDecl(PdbTypeSymId id,
   if (!IsForwardRefUdt(cvt))
     return id;
 
-  return llvm::cantFail(tpi.findFullDeclForForwardRef(id.index));
+  return index.FindFullDeclForForwardRef(id.index);
 }
 
 template <typename RecordType> static size_t GetSizeOfTypeInternal(CVType cvt) {

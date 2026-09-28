@@ -5,6 +5,8 @@ from lldbsuite.test import lldbutil
 
 
 class ChangePtrTest(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     @skipIfWasm  # the test checks the address of a persistent expression result
     def test(self):
         self.build()

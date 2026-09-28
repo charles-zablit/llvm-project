@@ -49,6 +49,12 @@ class PdbIndex {
   /// The underlying PDB file.
   llvm::pdb::PDBFile *m_file = nullptr;
 
+  /// (record kind, name) -> definition, for Scoped records without a unique
+  /// name. Built on first use by FindFullDeclForForwardRef.
+  std::optional<
+      std::map<std::pair<uint16_t, std::string>, llvm::codeview::TypeIndex>>
+      m_scoped_definitions;
+
   /// The DBI stream.  This contains general high level information about the
   /// features present in the PDB file, compile units (such as the information
   /// necessary to locate full symbol information for each compile unit),
@@ -120,6 +126,16 @@ public:
 
   llvm::pdb::DbiStream &dbi() { return *m_dbi; }
   const llvm::pdb::DbiStream &dbi() const { return *m_dbi; }
+
+  /// Find the definition of the tag record \p ti if it is a forward
+  /// reference, like TpiStream::findFullDeclForForwardRef.
+  ///
+  /// The hash lookup of that function can't find the definition of a
+  /// function-local (Scoped) record without a unique name, as C types are:
+  /// the forward reference is hashed by its empty unique name, the definition
+  /// by its whole record. Those are matched by kind and name instead.
+  llvm::codeview::TypeIndex
+  FindFullDeclForForwardRef(llvm::codeview::TypeIndex ti);
 
   llvm::pdb::TpiStream &tpi() { return *m_tpi; }
   const llvm::pdb::TpiStream &tpi() const { return *m_tpi; }

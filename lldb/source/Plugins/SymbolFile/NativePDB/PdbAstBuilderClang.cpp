@@ -552,7 +552,7 @@ bool PdbAstBuilderClang::CompleteTagDecl(clang::TagDecl &tag) {
   if (cvt.kind() == LF_MODIFIER)
     tag_ti = LookThroughModifierRecord(cvt);
 
-  PdbTypeSymId best_ti = GetBestPossibleDecl(tag_ti, index.tpi());
+  PdbTypeSymId best_ti = GetBestPossibleDecl(tag_ti, index);
   cvt = index.tpi().getType(best_ti.index);
   if (!IsTagRecord(cvt)) {
     assert(false && "completing tag record that's not a tag record");
@@ -964,7 +964,7 @@ clang::QualType PdbAstBuilderClang::GetOrCreateClangType(PdbTypeSymId type) {
   SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
   PdbIndex &index = pdb->GetIndex();
-  PdbTypeSymId best_type = GetBestPossibleDecl(type, index.tpi());
+  PdbTypeSymId best_type = GetBestPossibleDecl(type, index);
 
   clang::QualType qt;
   if (best_type.index != type.index) {

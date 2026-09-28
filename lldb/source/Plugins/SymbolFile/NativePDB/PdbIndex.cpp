@@ -9,6 +9,7 @@
 #include "PdbIndex.h"
 #include "PdbUtil.h"
 
+#include "llvm/DebugInfo/CodeView/LazyRandomTypeCollection.h"
 #include "llvm/DebugInfo/CodeView/SymbolDeserializer.h"
 #include "llvm/DebugInfo/PDB/Native/DbiStream.h"
 #include "llvm/DebugInfo/PDB/Native/GlobalsStream.h"
@@ -194,4 +195,35 @@ CVSymbol PdbIndex::ReadSymbolRecord(PdbCompilandSymId cu_sym) const {
 
 CVSymbol PdbIndex::ReadSymbolRecord(PdbGlobalSymId global) const {
   return symrecords().readRecord(global.offset);
+}
+
+TypeIndex PdbIndex::FindFullDeclForForwardRef(TypeIndex ti) {
+  TypeIndex full = llvm::cantFail(tpi().findFullDeclForForwardRef(ti));
+  if (full != ti)
+    return full;
+
+  CVType cvt = tpi().getType(ti);
+  if (!IsTagRecord(cvt) || !IsForwardRefUdt(cvt))
+    return ti;
+  CVTagRecord tag = CVTagRecord::create(cvt);
+  if (!tag.asTag().isScoped() || tag.asTag().hasUniqueName())
+    return ti;
+
+  if (!m_scoped_definitions) {
+    m_scoped_definitions.emplace();
+    LazyRandomTypeCollection &types = tpi().typeCollection();
+    for (auto cur = types.getFirst(); cur; cur = types.getNext(*cur)) {
+      CVType cur_cvt = types.getType(*cur);
+      if (!IsTagRecord(cur_cvt) || IsForwardRefUdt(cur_cvt))
+        continue;
+      CVTagRecord cur_tag = CVTagRecord::create(cur_cvt);
+      if (cur_tag.asTag().isScoped() && !cur_tag.asTag().hasUniqueName())
+        m_scoped_definitions->try_emplace(
+            {uint16_t(cur_cvt.kind()), cur_tag.name().str()}, *cur);
+    }
+  }
+
+  auto it =
+      m_scoped_definitions->find({uint16_t(cvt.kind()), tag.name().str()});
+  return it == m_scoped_definitions->end() ? ti : it->second;
 }

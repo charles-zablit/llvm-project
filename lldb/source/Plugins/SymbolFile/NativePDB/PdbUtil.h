@@ -157,7 +157,7 @@ size_t GetTypeSizeForSimpleKind(llvm::codeview::SimpleTypeKind kind);
 lldb::BasicType
 GetCompilerTypeForSimpleKind(llvm::codeview::SimpleTypeKind kind);
 
-PdbTypeSymId GetBestPossibleDecl(PdbTypeSymId id, llvm::pdb::TpiStream &tpi);
+PdbTypeSymId GetBestPossibleDecl(PdbTypeSymId id, PdbIndex &index);
 
 size_t GetSizeOfType(PdbTypeSymId id, llvm::pdb::TpiStream &tpi);
 
