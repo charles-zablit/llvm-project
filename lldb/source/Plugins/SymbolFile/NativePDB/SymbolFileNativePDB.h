@@ -254,6 +254,10 @@ private:
   lldb::TypeSP GetOrCreateType(llvm::codeview::TypeIndex ti);
   lldb::VariableSP GetOrCreateGlobalVariable(PdbGlobalSymId var_id);
   Block *GetOrCreateBlock(PdbCompilandSymId block_id);
+  /// Create the variable for a static (S_LDATA32) or thread-local
+  /// (S_LTHREAD32) variable declared in the function or block \p scope_id.
+  lldb::VariableSP GetOrCreateLocalStaticVariable(PdbCompilandSymId scope_id,
+                                                  PdbCompilandSymId var_id);
   lldb::VariableSP GetOrCreateLocalVariable(PdbCompilandSymId scope_id,
                                             PdbCompilandSymId var_id,
                                             bool is_param,
