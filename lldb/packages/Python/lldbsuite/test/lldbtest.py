@@ -300,6 +300,28 @@ def dump_value_obj(val: lldb.SBValue, max_children: int = 10000) -> str:
     return str(val)
 
 
+def normalize_template_closers(text):
+    """Spell nested template closers as ">>".
+
+    Depending on the AST a type lives in, LLDB prints them as ">>" or "> >",
+    so tests shouldn't depend on either spelling.
+    """
+    while "> >" in text:
+        text = text.replace("> >", ">>")
+    return text
+
+
+def template_closers_regex(type_name):
+    """A regex matching \p type_name however its template closers and the
+    suffixes of its integer template arguments are spelled."""
+    # Spaces and '-' need no escaping, and backslashes would have to survive
+    # the command line quoting.
+    escaped = re.escape(type_name).replace("\\ ", " ").replace("\\-", "-")
+    regex = re.sub(r">(?=>)", "> ?", escaped)
+    regex = re.sub(r"(?<=\d)(?=[,>])", "(U?L?L?)?", regex)
+    return "^" + regex + "$"
+
+
 class ValueCheck:
     def __init__(
         self,
@@ -378,7 +400,9 @@ class ValueCheck:
                 test_base.assertEqual(self.expect_value, val.GetValue(), this_error_msg)
         if self.expect_type:
             test_base.assertEqual(
-                self.expect_type, val.GetDisplayTypeName(), this_error_msg
+                normalize_template_closers(self.expect_type),
+                normalize_template_closers(val.GetDisplayTypeName()),
+                this_error_msg,
             )
         if self.expect_summary:
             if isinstance(self.expect_summary, re.Pattern):
@@ -387,7 +411,9 @@ class ValueCheck:
                 )
             else:
                 test_base.assertEqual(
-                    self.expect_summary, val.GetSummary(), this_error_msg
+                    normalize_template_closers(self.expect_summary),
+                    normalize_template_closers(val.GetSummary() or ""),
+                    this_error_msg,
                 )
         if self.children is not None:
             self.check_value_children(test_base, val, error_msg)
@@ -2952,6 +2978,16 @@ FileCheck output:
                     expecting_str, endstr, found_str(matched)
                 )
             )
+
+        # When looking for a match, don't depend on how nested template closers
+        # are spelled (see normalize_template_closers).
+        if matching and isinstance(output, str):
+            normalize = lambda s: (
+                normalize_template_closers(s) if isinstance(s, str) else s
+            )
+            output = normalize(output)
+            substrs = [normalize(s) for s in substrs or []]
+            patterns = [normalize(p) for p in patterns or []]
 
         if substrs and matched == matching:
             start = 0
