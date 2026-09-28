@@ -990,6 +990,17 @@ clang::QualType PdbAstBuilderClang::GetOrCreateClangType(PdbTypeSymId type) {
     DeclStatus &status = m_decl_to_status[tag];
     status.uid = uid;
     status.resolved = false;
+
+    // Sema uses the promotion type of an enum without requiring the enum to be
+    // complete, and that type is only set once the definition is. Complete
+    // enums right away, like SymbolFileDWARF does. Without a definition in the
+    // PDB there are no enumerators, but the underlying type is still known.
+    if (auto *enum_decl = llvm::dyn_cast<clang::EnumDecl>(tag)) {
+      if (!CompleteTagDecl(*enum_decl)) {
+        TypeSystemClang::CompleteTagDeclarationDefinition(ToCompilerType(qt));
+        m_decl_to_status[enum_decl].resolved = true;
+      }
+    }
   }
   return qt;
 }
