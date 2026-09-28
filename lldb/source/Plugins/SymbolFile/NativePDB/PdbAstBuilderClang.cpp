@@ -178,6 +178,7 @@ PdbAstBuilderClang::CreateDeclInfoForType(const TagRecord &record,
                                           TypeIndex ti) {
   SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
+
   // FIXME: Move this to GetDeclContextContainingUID.
   if (!record.hasUniqueName())
     return CreateDeclInfoForUndecoratedName(record.Name);
@@ -1446,9 +1447,11 @@ clang::QualType PdbAstBuilderClang::CreateEnumType(PdbTypeSymId id,
     return {};
 
   Declaration declaration;
+  // CodeView doesn't say whether this is a scoped enum (enum class). The
+  // Scoped option means that the enum is local to a function.
   CompilerType enum_ct = m_clang.CreateEnumerationType(
       uname, decl_context, OptionalClangModuleID(), declaration,
-      ToCompilerType(underlying_type), er.isScoped());
+      ToCompilerType(underlying_type), /*is_scoped=*/false);
 
   TypeSystemClang::StartTagDeclarationDefinition(enum_ct);
   TypeSystemClang::SetHasExternalStorage(enum_ct.GetOpaqueQualType(), true);
