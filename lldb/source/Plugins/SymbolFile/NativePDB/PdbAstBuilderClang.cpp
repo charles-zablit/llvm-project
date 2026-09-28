@@ -782,6 +782,10 @@ PdbAstBuilderClang::GetTemplateArgumentType(llvm::StringRef name) {
     return ast.Char16Ty;
   if (name == "char32_t")
     return ast.Char32Ty;
+  // GetCompilerTypeForSimpleKind makes the simple type Float16 a half, so the
+  // argument spelled _Float16 has to be one too.
+  if (name == "_Float16")
+    return ast.HalfTy;
   if (CompilerType builtin = m_clang.GetBuiltinTypeByName(ConstString(name)))
     return ClangUtil::GetQualType(builtin);
 
