@@ -1442,7 +1442,8 @@ clang::QualType PdbAstBuilderClang::CreateEnumType(PdbTypeSymId id,
   if (!decl_context)
     return {};
 
-  clang::QualType underlying_type = GetOrCreateClangType(er.UnderlyingType);
+  clang::QualType underlying_type =
+      GetOrCreateClangType(GetEnumUnderlyingType(er));
   if (underlying_type.isNull())
     return {};
 

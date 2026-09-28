@@ -1226,3 +1226,9 @@ lldb_private::npdb::GetFunctionType(llvm::codeview::CVSymbol symbol) {
     return std::nullopt;
   }
 }
+
+TypeIndex lldb_private::npdb::GetEnumUnderlyingType(const EnumRecord &er) {
+  if (er.getUnderlyingType() == TypeIndex::Void())
+    return TypeIndex::Int32();
+  return er.getUnderlyingType();
+}

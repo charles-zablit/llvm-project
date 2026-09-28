@@ -815,7 +815,7 @@ lldb::TypeSP SymbolFileNativePDB::CreateTagType(PdbTypeSymId type_id,
     LLDB_LOG_ERROR(GetLog(LLDBLog::Symbols), maybeDecl.takeError(),
                    "Failed to resolve declaration for '{1}': {0}", uname);
 
-  TypeSP underlying_type = GetOrCreateType(er.UnderlyingType);
+  TypeSP underlying_type = GetOrCreateType(GetEnumUnderlyingType(er));
 
   return MakeType(
       toOpaqueUid(type_id), ConstString(uname),

@@ -159,6 +159,11 @@ GetCompilerTypeForSimpleKind(llvm::codeview::SimpleTypeKind kind);
 
 PdbTypeSymId GetBestPossibleDecl(PdbTypeSymId id, PdbIndex &index);
 
+/// The underlying type of an enum. A C enum that is only declared has void as
+/// its underlying type; treat it as int, the underlying type C gives enums.
+llvm::codeview::TypeIndex
+GetEnumUnderlyingType(const llvm::codeview::EnumRecord &er);
+
 size_t GetSizeOfType(PdbTypeSymId id, llvm::pdb::TpiStream &tpi);
 
 std::optional<PdbTypeSymId> GetFunctionType(llvm::codeview::CVSymbol symbol);
