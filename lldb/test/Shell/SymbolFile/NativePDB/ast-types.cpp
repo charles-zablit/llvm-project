@@ -136,9 +136,9 @@ int SI::*mp9 = nullptr;
 // CHECK: (A::D) AD = {}
 // CHECK: (A::D::E) ADE = (ADDMember = 0)
 // CHECK: (Anonymous<int>) AnonInt = (AnonymousMember = 0)
-// CHECK: (Anonymous<A::B::C<void>>) AnonABCVoid = (AnonymousMember = 0)
-// CHECK: (Anonymous<A::B::C<void>>::D) AnonABCVoidD = (AnonymousDMember = 0)
-// CHECK: (Anonymous<A::B::C<void>>::U) AnonABCVoidU = (AnonymousUMember = 0)
+// CHECK: (Anonymous<A::B::C<void> >) AnonABCVoid = (AnonymousMember = 0)
+// CHECK: (Anonymous<A::B::C<void> >::D) AnonABCVoidD = (AnonymousDMember = 0)
+// CHECK: (Anonymous<A::B::C<void> >::U) AnonABCVoidU = (AnonymousUMember = 0)
 // CHECK: (void (SI::*)()) mp1 = 0x0000000000000000
 // CHECK: (void (MI::*)()) mp2 = 0x0000000000000000
 // CHECK: (void (MI2::*)()) mp3 = 0x0000000000000000
@@ -157,32 +157,49 @@ int SI::*mp9 = nullptr;
 // CHECK: | `-EnumConstantDecl {{.*}} TE_A 'TrivialE'
 // CHECK: |-NamespaceDecl {{.*}} A
 // CHECK: | |-NamespaceDecl {{.*}} B
-// CHECK: | | |-CXXRecordDecl {{.*}} struct C<int> definition
+// CHECK: | | |-ClassTemplateDecl {{.*}} C
+// CHECK: | | | |-TemplateTypeParmDecl {{.*}} class depth 0 index 0
+// CHECK: | | | |-CXXRecordDecl {{.*}} struct C
+// CHECK: | | |-ClassTemplateSpecializationDecl {{.*}} struct C definition
+// CHECK: | | | |-TemplateArgument type 'int'
 // CHECK: | | | `-FieldDecl {{.*}} ABCMember 'int'
-// CHECK: | | |-CXXRecordDecl {{.*}} struct C<float> definition
+// CHECK: | | |-ClassTemplateSpecializationDecl {{.*}} struct C definition
+// CHECK: | | | |-TemplateArgument type 'float'
 // CHECK: | | | `-FieldDecl {{.*}} ABCMember 'float'
-// CHECK: | | `-CXXRecordDecl {{.*}} struct C<void> definition
+// CHECK: | | `-ClassTemplateSpecializationDecl {{.*}} struct C definition
+// CHECK: | |   |-TemplateArgument type 'void'
 // CHECK: | |   `-FieldDecl {{.*}} ABCSpecializationMember 'void *'
 // FIXME: | |-CXXRecordDecl {{.*}} struct C<1> definition
 // FIXME: | | `-CXXRecordDecl {{.*}} class D definition
 // FIXME: | |   |-FieldDecl {{.*}} ACDMember 'int'
 // FIXME: | |   `-FieldDecl {{.*}} CPtr 'A::C<1> *'
-// CHECK: | |-CXXRecordDecl {{.*}} struct C<0> definition
+// CHECK: | |-ClassTemplateDecl {{.*}} C
+// CHECK: | | |-NonTypeTemplateParmDecl {{.*}} 'int' depth 0 index 0
+// CHECK: | | |-CXXRecordDecl {{.*}} struct C
+// CHECK: | |-ClassTemplateSpecializationDecl {{.*}} struct C definition
+// CHECK: | | |-TemplateArgument integral '0'
 // CHECK: | | `-CXXRecordDecl {{.*}} class D definition
 // CHECK: | |   |-FieldDecl {{.*}} ACDMember 'int'
 // CHECK: | |   `-FieldDecl {{.*}} CPtr 'A::C<-1> *'
-// CHECK: | |-CXXRecordDecl {{.*}} struct C<-1> definition
+// CHECK: | |-ClassTemplateSpecializationDecl {{.*}} struct C definition
+// CHECK: | | |-TemplateArgument integral '-1'
 // CHECK: | | `-CXXRecordDecl {{.*}} class D definition
 // CHECK: | |   |-FieldDecl {{.*}} ACDMember 'int'
 // CHECK: | |   `-FieldDecl {{.*}} CPtr 'A::C<-2> *'
-// CHECK: | |-CXXRecordDecl {{.*}} struct C<-2>
+// CHECK: | |-ClassTemplateSpecializationDecl {{.*}} struct C
+// CHECK: | | `-TemplateArgument integral '-2'
 // CHECK: | `-CXXRecordDecl {{.*}} struct D definition
 // CHECK: |   `-CXXRecordDecl {{.*}} struct E definition
 // CHECK: |     `-FieldDecl {{.*}} ADDMember 'int'
 // CHECK: |-NamespaceDecl
-// CHECK: | |-CXXRecordDecl {{.*}} struct Anonymous<int> definition
+// CHECK: | |-ClassTemplateDecl {{.*}} Anonymous
+// CHECK: | | |-TemplateTypeParmDecl {{.*}} class depth 0 index 0
+// CHECK: | | |-CXXRecordDecl {{.*}} struct Anonymous
+// CHECK: | |-ClassTemplateSpecializationDecl {{.*}} struct Anonymous definition
+// CHECK: | | |-TemplateArgument type 'int'
 // CHECK: | | `-FieldDecl {{.*}} AnonymousMember 'int'
-// CHECK: | `-CXXRecordDecl {{.*}} struct Anonymous<A::B::C<void>> definition
+// CHECK: | `-ClassTemplateSpecializationDecl {{.*}} struct Anonymous definition
+// CHECK: |   |-TemplateArgument type 'A::B::C<void>'
 // CHECK: |   |-CXXRecordDecl {{.*}} struct D definition
 // CHECK: |   | |-VarDecl {{.*}} StaticMember 'const int' static cinit
 // CHECK: |   | | `-IntegerLiteral {{.*}} 'int' 1

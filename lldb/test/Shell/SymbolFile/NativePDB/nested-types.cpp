@@ -161,7 +161,11 @@ int main(int argc, char **argv) {
 // CHECK: | | `-FieldDecl {{.*}} H 'int'
 // CHECK: | `-FieldDecl {{.*}} NT 'int'
 
-// CHECK: |-CXXRecordDecl {{.*}} class U<int> definition
+// CHECK: |-ClassTemplateDecl {{.*}} U
+// CHECK: | |-TemplateTypeParmDecl {{.*}} class depth 0 index 0
+// CHECK: | |-CXXRecordDecl {{.*}} class U
+// CHECK: |-ClassTemplateSpecializationDecl {{.*}} class U definition
+// CHECK: | |-TemplateArgument type 'int'
 // CHECK: | |-CXXRecordDecl {{.*}} struct W definition
 // CHECK: | | |-FieldDecl {{.*}} M 'int'
 // CHECK: | | `-FieldDecl {{.*}} N 'int'
@@ -179,6 +183,6 @@ int main(int argc, char **argv) {
 // CHECK: | | `-BuiltinType {{.*}} 'int'
 // CHECK: | |-TypedefDecl {{.*}} X 'U<int>'
 // CHECK: | | `-RecordType {{.*}} 'U<int>' canonical
-// CHECK: | |   `-CXXRecord {{.*}} 'U<int>'
+// CHECK: | |   `-ClassTemplateSpecialization {{.*}} 'U'
 // CHECK: | |-FieldDecl {{.*}} I 'int'
 // CHECK: | `-FieldDecl {{.*}} J 'int'

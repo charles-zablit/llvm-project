@@ -7,6 +7,8 @@ from lldbsuite.test import lldbutil
 
 
 class TestSBModuleFindTypes(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def test_lookup_in_template_scopes(self):
         self.build()
         spec = lldb.SBModuleSpec()

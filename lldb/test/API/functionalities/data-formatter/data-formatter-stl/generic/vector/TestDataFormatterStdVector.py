@@ -116,17 +116,17 @@ class StdVectorDataFormatterTestCase(TestBase):
             else "int_vect"
         )
         self.runCmd(
-            f'type summary add --summary-string "item 0 is ${{var[0]}}" std::int_vect "{int_vect}"'
+            f'type summary add --summary-string "item 0 is ${{var[0]}}" -x "^std::int_vect$" "{template_closers_regex(int_vect)}"'
         )
         self.expect("frame variable numbers", substrs=["item 0 is 1"])
 
         self.runCmd(
-            f'type summary add --summary-string "item 0 is ${{svar[0]}}" "std::int_vect" "{int_vect}"'
+            f'type summary add --summary-string "item 0 is ${{svar[0]}}" -x "^std::int_vect$" "{template_closers_regex(int_vect)}"'
         )
         self.expect("frame variable numbers", substrs=["item 0 is 1"])
         # move on with synths
-        self.runCmd("type summary delete std::int_vect")
-        self.runCmd(f'type summary delete "{int_vect}"')
+        self.runCmd('type summary delete "^std::int_vect$"')
+        self.runCmd(f'type summary delete "{template_closers_regex(int_vect)}"')
 
         # add some more data
         lldbutil.continue_to_breakpoint(process, bkpt)
@@ -157,7 +157,7 @@ class StdVectorDataFormatterTestCase(TestBase):
             else "string_vect"
         )
         self.runCmd(
-            f'type summary add std::string_vect "{string_vect}" --summary-string "vector has ${{svar%#}} items" -e'
+            f'type summary add -x "^std::string_vect$" "{template_closers_regex(string_vect)}" --summary-string "vector has ${{svar%#}} items" -e'
         )
         self.expect(
             "frame variable strings",

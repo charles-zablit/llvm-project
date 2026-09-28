@@ -316,8 +316,12 @@ constexpr References ReferencesInstance;
 // CHECK: | | `-ParmVarDecl {{.*}} 'int'
 // CHECK: | `-FieldDecl {{.*}} DerivedMember 'int'
 // CHECK: |-VarDecl {{.*}} DC 'const DerivedClass'
-// CHECK: |-CXXRecordDecl {{.*}} struct BaseClass<int> definition
-// CHECK: | |-CXXMethodDecl {{.*}} BaseClass 'void (int)'
+// CHECK: |-ClassTemplateDecl {{.*}} BaseClass
+// CHECK: | |-TemplateTypeParmDecl {{.*}} class depth 0 index 0
+// CHECK: | |-CXXRecordDecl {{.*}} struct BaseClass
+// CHECK: |-ClassTemplateSpecializationDecl {{.*}} struct BaseClass definition
+// CHECK: | |-TemplateArgument type 'int'
+// CHECK: | |-CXXConstructorDecl {{.*}} BaseClass 'void (int)'
 // CHECK: | | `-ParmVarDecl {{.*}} 'int'
 // CHECK: | `-FieldDecl {{.*}} BaseMember 'int'
 // CHECK: |-CXXRecordDecl {{.*}} struct EBO definition
@@ -338,12 +342,14 @@ constexpr References ReferencesInstance;
 // CHECK: | | `-ParmVarDecl {{.*}} 'long long'
 // CHECK: | `-FieldDecl {{.*}} DerivedMember 'long long'
 // CHECK: |-VarDecl {{.*}} PBC 'const PaddedBases'
-// CHECK: |-CXXRecordDecl {{.*}} struct BaseClass<char> definition
-// CHECK: | |-CXXMethodDecl {{.*}} BaseClass 'void (int)'
+// CHECK: |-ClassTemplateSpecializationDecl {{.*}} struct BaseClass definition
+// CHECK: | |-TemplateArgument type 'char'
+// CHECK: | |-CXXConstructorDecl {{.*}} BaseClass 'void (int)'
 // CHECK: | | `-ParmVarDecl {{.*}} 'int'
 // CHECK: | `-FieldDecl {{.*}} BaseMember 'int'
-// CHECK: |-CXXRecordDecl {{.*}} struct BaseClass<short> definition
-// CHECK: | |-CXXMethodDecl {{.*}} BaseClass 'void (int)'
+// CHECK: |-ClassTemplateSpecializationDecl {{.*}} struct BaseClass definition
+// CHECK: | |-TemplateArgument type 'short'
+// CHECK: | |-CXXConstructorDecl {{.*}} BaseClass 'void (int)'
 // CHECK: | | `-ParmVarDecl {{.*}} 'int'
 // CHECK: | `-FieldDecl {{.*}} BaseMember 'int'
 // CHECK: |-CXXRecordDecl {{.*}} struct <unnamed-type-UnnamedClassInstance> definition

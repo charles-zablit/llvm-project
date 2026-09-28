@@ -227,3 +227,24 @@ TypeIndex PdbIndex::FindFullDeclForForwardRef(TypeIndex ti) {
       m_scoped_definitions->find({uint16_t(cvt.kind()), tag.name().str()});
   return it == m_scoped_definitions->end() ? ti : it->second;
 }
+
+std::optional<TypeIndex> PdbIndex::FindTagRecord(llvm::StringRef name) {
+  if (!m_tag_records) {
+    m_tag_records.emplace();
+    LazyRandomTypeCollection &types = tpi().typeCollection();
+    for (auto ti = types.getFirst(); ti; ti = types.getNext(*ti)) {
+      CVType cvt = types.getType(*ti);
+      if (!IsTagRecord(cvt))
+        continue;
+      auto [it, inserted] =
+          m_tag_records->try_emplace(CVTagRecord::create(cvt).name(), *ti);
+      // Prefer the definition over a declaration.
+      if (!inserted && !IsForwardRefUdt(cvt))
+        it->second = *ti;
+    }
+  }
+  auto it = m_tag_records->find(name);
+  if (it == m_tag_records->end())
+    return std::nullopt;
+  return it->second;
+}

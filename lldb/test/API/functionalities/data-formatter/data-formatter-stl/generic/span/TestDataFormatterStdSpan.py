@@ -93,25 +93,27 @@ class StdSpanDataFormatterTestCase(TestBase):
 
         # check access to synthetic children for dynamic spans
         dynamic_string_span = (
-            "std::span<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, -1>"
+            "std::span<std::basic_string<char, std::char_traits<char>, std::allocator<char>>, 18446744073709551615>"
             if self.getDebugInfo() == "pdb"
             else "dynamic_string_span"
         )
         self.runCmd(
-            f'type summary add --summary-string "item 0 is ${{var[0]}}" "{dynamic_string_span}"'
+            f'type summary add --summary-string "item 0 is ${{var[0]}}" -x "{template_closers_regex(dynamic_string_span)}"'
         )
         self.expect_var_path("strings_span", summary='item 0 is "smart"')
 
         self.runCmd(
-            f'type summary add --summary-string "item 0 is ${{svar[0]}}" "{dynamic_string_span}"'
+            f'type summary add --summary-string "item 0 is ${{svar[0]}}" -x "{template_closers_regex(dynamic_string_span)}"'
         )
         self.expect_var_path("strings_span", summary='item 0 is "smart"')
 
-        self.runCmd(f'type summary delete "{dynamic_string_span}"')
+        self.runCmd(
+            f'type summary delete "{template_closers_regex(dynamic_string_span)}"'
+        )
 
         # test summaries based on synthetic children
         self.runCmd(
-            f'type summary add --summary-string "span has ${{svar%#}} items" -e "{dynamic_string_span}"'
+            f'type summary add --summary-string "span has ${{svar%#}} items" -e -x "{template_closers_regex(dynamic_string_span)}"'
         )
 
         self.expect_var_path("strings_span", summary="span has 2 items")
@@ -135,7 +137,9 @@ class StdSpanDataFormatterTestCase(TestBase):
             result_children=expectedStringSpanChildren,
         )
 
-        self.runCmd(f'type summary delete "{dynamic_string_span}"')
+        self.runCmd(
+            f'type summary delete "{template_closers_regex(dynamic_string_span)}"'
+        )
 
         lldbutil.continue_to_breakpoint(process, bkpt)
 

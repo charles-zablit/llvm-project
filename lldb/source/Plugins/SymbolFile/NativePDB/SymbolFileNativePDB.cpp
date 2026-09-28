@@ -776,6 +776,11 @@ SymbolFileNativePDB::CreateClassStructUnion(PdbTypeSymId type_id,
                                             size_t size, CompilerType ct) {
 
   std::string uname = GetUnqualifiedTypeName(record);
+  // A class template specialization is printed from its template arguments.
+  // Name the Type the same way, like SymbolFileDWARF does with DW_AT_name.
+  if (llvm::isa_and_nonnull<clang::ClassTemplateSpecializationDecl>(
+          ClangUtil::GetAsTagDecl(ct)))
+    uname = ct.GetTypeName(/*BaseOnly=*/true).GetString();
 
   llvm::Expected<Declaration> maybeDecl = ResolveUdtDeclaration(type_id);
   Declaration decl;

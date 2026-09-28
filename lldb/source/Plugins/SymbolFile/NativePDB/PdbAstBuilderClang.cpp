@@ -699,6 +699,150 @@ PdbAstBuilderClang::CreateModifierType(const ModifierRecord &modifier) {
   return unmodified_type;
 }
 
+/// Split a CodeView name like "Foo<int,Bar<char> >" into the name of the
+/// template ("Foo") and its top-level arguments ("int" and "Bar<char>").
+static bool
+SplitTemplateArguments(llvm::StringRef name, llvm::StringRef &base,
+                       llvm::SmallVectorImpl<llvm::StringRef> &args) {
+  name = name.rtrim();
+  if (!name.ends_with(">"))
+    return false;
+
+  // Find the '<' that matches the final '>'.
+  int depth = 0;
+  size_t open = llvm::StringRef::npos;
+  for (size_t i = name.size(); i-- > 0;) {
+    if (name[i] == '>')
+      ++depth;
+    else if (name[i] == '<' && --depth == 0) {
+      open = i;
+      break;
+    }
+  }
+  if (open == llvm::StringRef::npos || open == 0)
+    return false;
+  base = name.take_front(open).rtrim();
+  // Scopes or operators in the base name mean this isn't a plain template name.
+  if (base.empty() || base.contains("::") || base.contains('<') ||
+      base.contains(' '))
+    return false;
+
+  llvm::StringRef inner = name.slice(open + 1, name.size() - 1);
+  depth = 0;
+  size_t start = 0;
+  for (size_t i = 0; i < inner.size(); ++i) {
+    char c = inner[i];
+    if (c == '<' || c == '(' || c == '[')
+      ++depth;
+    else if (c == '>' || c == ')' || c == ']')
+      --depth;
+    else if (c == ',' && depth == 0) {
+      args.push_back(inner.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  args.push_back(inner.drop_front(start).trim());
+  return depth == 0 &&
+         llvm::none_of(args, [](llvm::StringRef arg) { return arg.empty(); });
+}
+
+clang::QualType
+PdbAstBuilderClang::GetTemplateArgumentType(llvm::StringRef name) {
+  name = name.trim();
+  clang::ASTContext &ast = m_clang.getASTContext();
+
+  auto wrap = [&](llvm::StringRef inner, auto make) -> clang::QualType {
+    clang::QualType qt = GetTemplateArgumentType(inner);
+    return qt.isNull() ? qt : make(qt);
+  };
+  if (name.consume_back("&&"))
+    return wrap(name, [&](clang::QualType qt) {
+      return ast.getRValueReferenceType(qt);
+    });
+  if (name.consume_back("&"))
+    return wrap(name, [&](clang::QualType qt) {
+      return ast.getLValueReferenceType(qt);
+    });
+  if (name.consume_back("*"))
+    return wrap(name,
+                [&](clang::QualType qt) { return ast.getPointerType(qt); });
+  if (name.consume_back(" const") || name.consume_front("const "))
+    return wrap(name, [](clang::QualType qt) { return qt.withConst(); });
+  if (name.consume_back(" volatile") || name.consume_front("volatile "))
+    return wrap(name, [](clang::QualType qt) { return qt.withVolatile(); });
+
+  // CodeView names use the MSVC spelling of the 64-bit integer types.
+  if (name == "__int64")
+    return ast.LongLongTy;
+  if (name == "unsigned __int64")
+    return ast.UnsignedLongLongTy;
+  if (name == "char8_t")
+    return ast.Char8Ty;
+  if (name == "char16_t")
+    return ast.Char16Ty;
+  if (name == "char32_t")
+    return ast.Char32Ty;
+  if (CompilerType builtin = m_clang.GetBuiltinTypeByName(ConstString(name)))
+    return ClangUtil::GetQualType(builtin);
+
+  SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
+      m_clang.GetSymbolFile()->GetBackingSymbolFile());
+  PdbIndex &index = pdb->GetIndex();
+  if (std::optional<TypeIndex> ti = index.FindTagRecord(name))
+    return GetOrCreateClangType(PdbTypeSymId(*ti));
+
+  // A type that is only used as a template argument, like
+  // std::_Simple_types<char>, can be missing from the PDB altogether. Declare
+  // it, like a DWARF declaration would.
+  if (name.contains('('))
+    return {};
+  auto it = m_template_argument_decls.find(name);
+  if (it != m_template_argument_decls.end())
+    return it->second;
+  auto [context, uname] = CreateDeclInfoForUndecoratedName(name);
+  if (!context)
+    return {};
+  CompilerType ct =
+      m_clang.CreateRecordType(context, OptionalClangModuleID(), uname,
+                               llvm::to_underlying(clang::TagTypeKind::Struct),
+                               lldb::eLanguageTypeC_plus_plus);
+  clang::QualType qt = ClangUtil::GetQualType(ct);
+  m_template_argument_decls[name] = qt;
+  return qt;
+}
+
+std::optional<clang::TemplateArgument>
+PdbAstBuilderClang::GetTemplateArgument(llvm::StringRef arg) {
+  clang::ASTContext &ast = m_clang.getASTContext();
+  if (arg == "true" || arg == "false")
+    return clang::TemplateArgument(
+        ast,
+        llvm::APSInt(llvm::APInt(ast.getIntWidth(ast.BoolTy), arg == "true")),
+        ast.BoolTy);
+
+  // CodeView doesn't have the type of a non-type argument, only its value.
+  llvm::StringRef digits = arg;
+  bool negative = digits.consume_front("-");
+  uint64_t value;
+  if (!digits.empty() && llvm::isDigit(digits.front())) {
+    if (digits.getAsInteger(10, value))
+      return std::nullopt;
+    clang::QualType qt = ast.IntTy;
+    if (value > uint64_t(std::numeric_limits<int32_t>::max()))
+      qt = negative ? ast.LongLongTy : ast.UnsignedLongLongTy;
+    llvm::APSInt int_value(llvm::APInt(ast.getIntWidth(qt),
+                                       negative ? -value : value,
+                                       /*isSigned=*/negative),
+                           qt->isUnsignedIntegerType());
+    return clang::TemplateArgument(ast, int_value, qt);
+  }
+
+  clang::QualType qt = GetTemplateArgumentType(arg);
+  if (qt.isNull())
+    return std::nullopt;
+  return clang::TemplateArgument(qt);
+}
+
 clang::QualType PdbAstBuilderClang::CreateRecordType(PdbTypeSymId id,
                                                      const TagRecord &record) {
   clang::DeclContext *context = nullptr;
@@ -712,9 +856,52 @@ clang::QualType PdbAstBuilderClang::CreateRecordType(PdbTypeSymId id,
   metadata.SetUserID(toOpaqueUid(id));
   metadata.SetIsDynamicCXXType(false);
 
-  CompilerType ct = m_clang.CreateRecordType(
-      context, OptionalClangModuleID(), uname, llvm::to_underlying(ttk),
-      lldb::eLanguageTypeC_plus_plus, metadata);
+  // CodeView only has the name of a class template specialization. If all its
+  // arguments can be recovered from the name, create the specialization like
+  // DWARF does, so that the template arguments are available.
+  CompilerType ct;
+  llvm::StringRef template_name;
+  llvm::SmallVector<llvm::StringRef, 4> arg_names;
+  // Split the CodeView name rather than uname, which may come from demangling
+  // the unique name and spells the arguments differently than the records.
+  // A uname with scopes means the parent type is missing (llvm.org/pr39607)
+  // and the record is declared at global scope under its qualified name. Keep
+  // that name rather than dropping the scopes.
+  if (MSVCUndecoratedNameParser::DropScope(uname) == uname &&
+      SplitTemplateArguments(MSVCUndecoratedNameParser::DropScope(record.Name),
+                             template_name, arg_names)) {
+    TypeSystemClang::TemplateParameterInfos infos;
+    bool resolved = true;
+    for (llvm::StringRef arg_name : arg_names) {
+      std::optional<clang::TemplateArgument> arg =
+          GetTemplateArgument(arg_name);
+      if (!arg) {
+        resolved = false;
+        break;
+      }
+      infos.InsertArg(nullptr, *arg);
+    }
+    if (resolved) {
+      clang::ClassTemplateDecl *template_decl = m_clang.ParseClassTemplateDecl(
+          context, OptionalClangModuleID(), template_name.str().c_str(),
+          llvm::to_underlying(ttk), infos);
+      clang::ClassTemplateSpecializationDecl *spec_decl =
+          template_decl ? m_clang.CreateClassTemplateSpecializationDecl(
+                              context, OptionalClangModuleID(), template_decl,
+                              llvm::to_underlying(ttk), infos)
+                        : nullptr;
+      if (spec_decl) {
+        ct = m_clang.CreateClassTemplateSpecializationType(spec_decl);
+        m_clang.SetMetadata(template_decl, metadata);
+        m_clang.SetMetadata(spec_decl, metadata);
+      }
+    }
+  }
+
+  if (!ct)
+    ct = m_clang.CreateRecordType(context, OptionalClangModuleID(), uname,
+                                  llvm::to_underlying(ttk),
+                                  lldb::eLanguageTypeC_plus_plus, metadata);
   if (!ct.IsValid()) {
     LLDB_LOG(GetLog(LLDBLog::Symbols), "failed to create record type for {0}",
              id);

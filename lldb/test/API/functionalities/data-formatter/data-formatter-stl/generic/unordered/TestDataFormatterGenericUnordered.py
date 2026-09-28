@@ -50,7 +50,7 @@ class GenericUnorderedDataFormatterTestCase(TestBase):
         children_are_key_value = r"\[0\] = \{\s*first = "
 
         unordered_map_type = (
-            "std::unordered_map<int, std::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::hash<int>, std::equal_to<int>, std::allocator<std::pair<int const, std::basic_string<char, std::char_traits<char>, std::allocator<char>>>>>"
+            "std::unordered_map<int, std::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::hash<int>, std::equal_to<int>, std::allocator<std::pair<const int, std::basic_string<char, std::char_traits<char>, std::allocator<char>>>>>"
             if self.getDebugInfo() == "pdb"
             else "UnorderedMap"
         )
@@ -69,7 +69,7 @@ class GenericUnorderedDataFormatterTestCase(TestBase):
         )
 
         unordered_mmap_type = (
-            "std::unordered_multimap<int, std::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::hash<int>, std::equal_to<int>, std::allocator<std::pair<int const, std::basic_string<char, std::char_traits<char>, std::allocator<char>>>>>"
+            "std::unordered_multimap<int, std::basic_string<char, std::char_traits<char>, std::allocator<char>>, std::hash<int>, std::equal_to<int>, std::allocator<std::pair<const int, std::basic_string<char, std::char_traits<char>, std::allocator<char>>>>>"
             if self.getDebugInfo() == "pdb"
             else "UnorderedMultiMap"
         )

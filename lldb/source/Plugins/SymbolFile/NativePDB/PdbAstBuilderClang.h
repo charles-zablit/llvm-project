@@ -14,10 +14,12 @@
 #include "Plugins/ExpressionParser/Clang/ClangASTImporter.h"
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/DebugInfo/CodeView/CVRecord.h"
 #include "llvm/Support/Threading.h"
 
 namespace clang {
+class TemplateArgument;
 class TagDecl;
 class DeclContext;
 class Decl;
@@ -114,6 +116,14 @@ private:
   clang::QualType
   CreateModifierType(const llvm::codeview::ModifierRecord &modifier);
   clang::QualType CreateArrayType(const llvm::codeview::ArrayRecord &array);
+  /// Records declared for template arguments that aren't in the PDB.
+  llvm::StringMap<clang::QualType> m_template_argument_decls;
+
+  /// Resolve a type spelled in a CodeView template argument list.
+  clang::QualType GetTemplateArgumentType(llvm::StringRef name);
+  std::optional<clang::TemplateArgument>
+  GetTemplateArgument(llvm::StringRef arg);
+
   clang::QualType CreateRecordType(PdbTypeSymId id,
                                    const llvm::codeview::TagRecord &record);
   clang::QualType CreateEnumType(PdbTypeSymId id,

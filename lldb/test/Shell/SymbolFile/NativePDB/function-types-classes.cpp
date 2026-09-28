@@ -97,7 +97,7 @@ auto g = &three<B::A::S*, A::C::S&, A::B::S*>;
 
 // parameter types that are themselves template instantiations.
 auto h = &four<TC<void>, TC<int>, TC<TC<int>>, TC<A::B::S>>;
-// CHECK: (TC<void> (*)(TC<int>, TC<TC<int>>, TC<A::B::S>)) h = {{.*}}
+// CHECK: (TC<void> (*)(TC<int>, TC<TC<int> >, TC<A::B::S>)) h = {{.*}}
 
 auto i = &nullary<A::B::S>;
 // CHECK: (A::B::S (*)()) i = {{.*}}
@@ -128,11 +128,18 @@ auto incomplete = &three<Incomplete*, Incomplete**, const Incomplete*>;
 // CHECK: |-VarDecl {{.*}} e 'A::B::S *(*)(B::A::S *, A::C::S &)'
 // CHECK: |-VarDecl {{.*}} f 'A::C::S &(*)(A::B::S *, B::A::S *)'
 // CHECK: |-VarDecl {{.*}} g 'B::A::S *(*)(A::C::S &, A::B::S *)'
-// CHECK: |-CXXRecordDecl {{.*}} struct TC<int>
-// CHECK: |-CXXRecordDecl {{.*}} struct TC<TC<int>>
-// CHECK: |-CXXRecordDecl {{.*}} struct TC<A::B::S>
-// CHECK: |-CXXRecordDecl {{.*}} struct TC<void>
-// CHECK: |-VarDecl {{.*}} h 'TC<void> (*)(TC<int>, TC<TC<int>>, TC<A::B::S>)'
+// CHECK: |-ClassTemplateDecl {{.*}} TC
+// CHECK: | |-TemplateTypeParmDecl {{.*}} class depth 0 index 0
+// CHECK: | |-CXXRecordDecl {{.*}} struct TC
+// CHECK: |-ClassTemplateSpecializationDecl {{.*}} struct TC
+// CHECK: | `-TemplateArgument type 'int'
+// CHECK: |-ClassTemplateSpecializationDecl {{.*}} struct TC
+// CHECK: | `-TemplateArgument type 'TC<int>'
+// CHECK: |-ClassTemplateSpecializationDecl {{.*}} struct TC
+// CHECK: | `-TemplateArgument type 'A::B::S'
+// CHECK: |-ClassTemplateSpecializationDecl {{.*}} struct TC
+// CHECK: | `-TemplateArgument type 'void'
+// CHECK: |-VarDecl {{.*}} h 'TC<void> (*)(TC<int>, TC<TC<int> >, TC<A::B::S>)'
 // CHECK: |-VarDecl {{.*}} i 'A::B::S (*)()'
 // CHECK: |-CXXRecordDecl {{.*}} struct Incomplete
 // CHECK: `-VarDecl {{.*}} incomplete 'Incomplete *(*)(Incomplete **, const Incomplete *)'

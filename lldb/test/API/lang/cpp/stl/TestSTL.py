@@ -10,6 +10,8 @@ from lldbsuite.test import lldbutil
 
 
 class STLTestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     @expectedFailureAll(bugnumber="llvm.org/PR36713")
     def test(self):
         """Test some expressions involving STL data types."""

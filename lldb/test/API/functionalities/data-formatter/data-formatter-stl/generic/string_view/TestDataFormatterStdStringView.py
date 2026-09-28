@@ -100,7 +100,10 @@ class StdStringViewDataFormatterTestCase(TestBase):
         # use the str representation instead
         null_obj = self.frame().GetValueForVariablePath("null_str")
         self.assertEqual(null_obj.GetSummary(), "Summary Unavailable")
-        self.assertEqual(str(null_obj), f"({string_view_name} *) null_str = nullptr")
+        self.assertEqual(
+            normalize_template_closers(str(null_obj)),
+            normalize_template_closers(f"({string_view_name} *) null_str = nullptr"),
+        )
 
         self.runCmd("n")
 

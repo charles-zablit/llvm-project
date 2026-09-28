@@ -11,6 +11,7 @@
 
 #include "lldb/lldb-types.h"
 #include "llvm/ADT/IntervalMap.h"
+#include "llvm/ADT/StringMap.h"
 #include "llvm/DebugInfo/PDB/Native/PDBFile.h"
 #include "llvm/DebugInfo/PDB/PDBTypes.h"
 
@@ -54,6 +55,9 @@ class PdbIndex {
   std::optional<
       std::map<std::pair<uint16_t, std::string>, llvm::codeview::TypeIndex>>
       m_scoped_definitions;
+
+  /// name -> tag record, built on first use by FindTagRecord.
+  std::optional<llvm::StringMap<llvm::codeview::TypeIndex>> m_tag_records;
 
   /// The DBI stream.  This contains general high level information about the
   /// features present in the PDB file, compile units (such as the information
@@ -136,6 +140,11 @@ public:
   /// by its whole record. Those are matched by kind and name instead.
   llvm::codeview::TypeIndex
   FindFullDeclForForwardRef(llvm::codeview::TypeIndex ti);
+
+  /// Find a tag record by its name, the definition if there is one. Unlike
+  /// TpiStream::findRecordsByName, this also finds records that are only
+  /// declared.
+  std::optional<llvm::codeview::TypeIndex> FindTagRecord(llvm::StringRef name);
 
   llvm::pdb::TpiStream &tpi() { return *m_tpi; }
   const llvm::pdb::TpiStream &tpi() const { return *m_tpi; }
