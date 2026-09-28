@@ -66,7 +66,7 @@ public:
   void EnsureVariable(PdbGlobalSymId var_id) override;
 
   CompilerType GetOrCreateType(PdbTypeSymId type) override;
-  CompilerType GetOrCreateTypedefType(PdbGlobalSymId id) override;
+  CompilerType GetOrCreateTypedefType(PdbSymUid id) override;
   bool CompleteType(CompilerType ct) override;
 
   void ParseDeclsForContext(CompilerDeclContext context) override;

@@ -819,7 +819,7 @@ PdbAstBuilderClang::GetOrCreateVariableDecl(PdbGlobalSymId var_id) {
   return CreateVariableDecl(PdbSymUid(var_id), sym, *context);
 }
 
-CompilerType PdbAstBuilderClang::GetOrCreateTypedefType(PdbGlobalSymId id) {
+CompilerType PdbAstBuilderClang::GetOrCreateTypedefType(PdbSymUid id) {
   if (clang::Decl *decl = TryGetDecl(id)) {
     if (auto *tnd = llvm::dyn_cast<clang::TypedefNameDecl>(decl))
       return ToCompilerType(m_clang.getASTContext().getTypeDeclType(tnd));
@@ -829,7 +829,9 @@ CompilerType PdbAstBuilderClang::GetOrCreateTypedefType(PdbGlobalSymId id) {
   SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
   PdbIndex &index = pdb->GetIndex();
-  CVSymbol sym = index.ReadSymbolRecord(id);
+  CVSymbol sym = id.kind() == PdbSymUidKind::GlobalSym
+                     ? index.ReadSymbolRecord(id.asGlobalSym())
+                     : index.ReadSymbolRecord(id.asCompilandSym());
   if (sym.kind() != S_UDT) {
     assert(false && "called on a non-udt type");
     return {};
@@ -837,7 +839,7 @@ CompilerType PdbAstBuilderClang::GetOrCreateTypedefType(PdbGlobalSymId id) {
   llvm::Expected<UDTSym> udt = SymbolDeserializer::deserializeAs<UDTSym>(sym);
   if (!udt) {
     LLDB_LOG_ERROR(GetLog(LLDBLog::Symbols), udt.takeError(),
-                   "Failed to deserialize {1} as UDT: {0}", id);
+                   "Failed to deserialize {1} as UDT: {0}", id.toOpaqueId());
     return CompilerType();
   }
 

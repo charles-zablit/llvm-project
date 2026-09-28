@@ -2614,6 +2614,49 @@ void SymbolFileNativePDB::FindTypes(const lldb_private::TypeQuery &query,
     if (results.Done(query))
       return;
   }
+
+  // Like SymbolFileDWARF, whose lookup context stops at the enclosing
+  // DW_TAG_subprogram, look up typedefs declared in functions by their name.
+  CacheLocalTypedefNames();
+  std::vector<uint64_t> local_typedefs;
+  m_local_typedef_base_names.GetValues(query.GetTypeBasename(), local_typedefs);
+  for (uint64_t uid : local_typedefs) {
+    if (!query.ContextMatches(
+            {{CompilerContextKind::Typedef, query.GetTypeBasename()}}))
+      continue;
+    TypeSP type_sp = GetOrCreateTypedef(PdbSymUid(uid));
+    if (!type_sp)
+      continue;
+    results.InsertUnique(type_sp);
+    if (results.Done(query))
+      return;
+  }
+}
+
+void SymbolFileNativePDB::CacheLocalTypedefNames() {
+  if (m_cached_local_typedef_names)
+    return;
+  m_cached_local_typedef_names = true;
+
+  for (uint16_t modi = 0; modi < GetNumCompileUnits(); ++modi) {
+    CompilandIndexItem &cci = m_index->compilands().GetOrCreateCompiland(modi);
+    const CVSymbolArray &syms = cci.m_debug_stream.getSymbolArray();
+    for (auto iter = syms.begin(); iter != syms.end(); ++iter) {
+      if (iter->kind() != S_UDT)
+        continue;
+      auto udt_or_err = SymbolDeserializer::deserializeAs<UDTSym>(*iter);
+      if (!udt_or_err) {
+        llvm::consumeError(udt_or_err.takeError());
+        continue;
+      }
+      if (!IsTypedefUdt(*udt_or_err))
+        continue;
+      m_local_typedef_base_names.Append(
+          ConstString(MSVCUndecoratedNameParser::DropScope(udt_or_err->Name)),
+          toOpaqueUid(PdbCompilandSymId(modi, iter.offset())));
+    }
+  }
+  m_local_typedef_base_names.Sort(std::less<uint64_t>());
 }
 
 std::vector<CompilerContext>
@@ -2928,10 +2971,12 @@ SymbolFileNativePDB::GetOrCreateLocalStaticVariable(PdbCompilandSymId scope_id,
   return var_sp;
 }
 
-TypeSP SymbolFileNativePDB::CreateTypedef(PdbGlobalSymId id) {
-  CVSymbol sym = m_index->ReadSymbolRecord(id);
+TypeSP SymbolFileNativePDB::CreateTypedef(PdbSymUid id) {
+  CVSymbol sym = id.kind() == PdbSymUidKind::GlobalSym
+                     ? m_index->ReadSymbolRecord(id.asGlobalSym())
+                     : m_index->ReadSymbolRecord(id.asCompilandSym());
   if (sym.kind() != S_UDT) {
-    LLDB_LOG(GetLog(LLDBLog::Symbols), "{0} is not an S_UDT", id);
+    LLDB_LOG(GetLog(LLDBLog::Symbols), "{0} is not an S_UDT", id.toOpaqueId());
     return nullptr;
   }
 
@@ -2966,7 +3011,7 @@ TypeSP SymbolFileNativePDB::CreateTypedef(PdbGlobalSymId id) {
                   lldb_private::Type::ResolveState::Forward);
 }
 
-TypeSP SymbolFileNativePDB::GetOrCreateTypedef(PdbGlobalSymId id) {
+TypeSP SymbolFileNativePDB::GetOrCreateTypedef(PdbSymUid id) {
   auto iter = m_types.find(toOpaqueUid(id));
   if (iter != m_types.end())
     return iter->second;

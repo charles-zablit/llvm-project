@@ -38,7 +38,7 @@ public:
   virtual void EnsureVariable(PdbGlobalSymId var_id) = 0;
 
   virtual CompilerType GetOrCreateType(PdbTypeSymId type) = 0;
-  virtual CompilerType GetOrCreateTypedefType(PdbGlobalSymId id) = 0;
+  virtual CompilerType GetOrCreateTypedefType(PdbSymUid id) = 0;
   virtual bool CompleteType(CompilerType ct) = 0;
 
   virtual void ParseDeclsForContext(CompilerDeclContext context) = 0;

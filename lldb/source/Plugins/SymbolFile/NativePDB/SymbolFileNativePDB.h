@@ -265,7 +265,9 @@ private:
                                             PdbCompilandSymId var_id,
                                             bool is_param,
                                             bool is_constant = false);
-  lldb::TypeSP GetOrCreateTypedef(PdbGlobalSymId id);
+  /// \param id The S_UDT of the typedef, in the globals stream or in a
+  ///     function in a module stream.
+  lldb::TypeSP GetOrCreateTypedef(PdbSymUid id);
 
   lldb::FunctionSP CreateFunction(PdbCompilandSymId func_id,
                                   CompileUnit &comp_unit);
@@ -273,7 +275,7 @@ private:
   lldb::VariableSP CreateLocalVariable(PdbCompilandSymId scope_id,
                                        PdbCompilandSymId var_id, bool is_param,
                                        bool is_constant = false);
-  lldb::TypeSP CreateTypedef(PdbGlobalSymId id);
+  lldb::TypeSP CreateTypedef(PdbSymUid id);
   lldb::CompUnitSP CreateCompileUnit(const CompilandIndexItem &cci);
   lldb::TypeSP CreateType(PdbTypeSymId type_id, CompilerType ct);
   lldb::TypeSP CreateAndCacheType(PdbTypeSymId type_id);
@@ -383,6 +385,13 @@ private:
   lldb_private::UniqueCStringMap<uint32_t> m_type_base_names;
   /// typedef basename -> Global ID(s) of its S_UDT
   lldb_private::UniqueCStringMap<uint32_t> m_typedef_base_names;
+  /// Index the typedefs declared in functions, which are S_UDT records in
+  /// the module streams.
+  void CacheLocalTypedefNames();
+  bool m_cached_local_typedef_names = false;
+  /// local typedef basename -> UID(s) of its S_UDT
+  lldb_private::UniqueCStringMap<uint64_t> m_local_typedef_base_names;
+
   /// Qualified name of a scope of a typedef -> Global ID of a typedef in it.
   llvm::StringMap<uint32_t> m_typedef_scopes;
 
