@@ -3349,18 +3349,20 @@ SymbolFileNativePDB::FindNamespace(ConstString name,
     return ns;
 
   // The AST builder only knows the namespaces of the decls it created so far.
-  // Namespaces of types and functions get created when they are parsed, but a
-  // namespace that only contains typedefs doesn't show up anywhere else.
-  // Create one of its typedefs so that the namespace exists.
+  // Create a typedef or a tag type declared in the namespace so that it exists.
   BuildParentMap();
   std::string qualified_name;
   if (parent_decl_ctx.IsValid())
     qualified_name = parent_decl_ctx.GetScopeQualifiedName().GetString() + "::";
   qualified_name += name.GetStringRef();
-  auto it = m_typedef_scopes.find(qualified_name);
-  if (it == m_typedef_scopes.end())
+  if (auto it = m_typedef_scopes.find(qualified_name);
+      it != m_typedef_scopes.end())
+    GetOrCreateTypedef(PdbGlobalSymId{it->second, false});
+  else if (auto it = m_tag_scopes.find(qualified_name);
+           it != m_tag_scopes.end())
+    ast_builder->GetOrCreateType(PdbTypeSymId(it->second));
+  else
     return {};
-  GetOrCreateTypedef(PdbGlobalSymId{it->second, false});
   return ast_builder->FindNamespaceDecl(parent_decl_ctx, name.GetStringRef());
 }
 
@@ -3532,6 +3534,32 @@ void SymbolFileNativePDB::BuildParentMap() {
   for (TypeIndex full : full_keys) {
     TypeIndex fwd = full_to_forward[full];
     m_parent_types[fwd] = m_parent_types[full];
+  }
+
+  // A tag type without a parent type is declared in the namespaces its name is
+  // qualified with. Remember one for each of them, so that FindNamespace can
+  // create a namespace before anything in it was parsed.
+  for (const auto &entry : record_indices) {
+    TypeIndex ti = entry.second.full != TypeIndex::None()
+                       ? entry.second.full
+                       : entry.second.forward;
+    if (ti == TypeIndex::None() || m_parent_types.contains(ti))
+      continue;
+    CVTagRecord tag = CVTagRecord::create(types.getType(ti));
+    // A function-local type is qualified with its function.
+    if (tag.asTag().isScoped())
+      continue;
+    std::optional<Type::ParsedName> parsed_name =
+        Type::GetTypeScopeAndBasename(tag.name());
+    if (!parsed_name)
+      continue;
+    std::string scope_name;
+    for (llvm::StringRef scope : parsed_name->scope) {
+      if (!scope_name.empty())
+        scope_name += "::";
+      scope_name += scope;
+      m_tag_scopes.try_emplace(scope_name, ti);
+    }
   }
 }
 

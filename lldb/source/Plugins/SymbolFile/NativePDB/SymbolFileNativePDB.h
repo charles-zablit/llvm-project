@@ -395,6 +395,9 @@ private:
   /// Qualified name of a scope of a typedef -> Global ID of a typedef in it.
   llvm::StringMap<uint32_t> m_typedef_scopes;
 
+  /// Qualified name of a namespace -> a tag type declared in it.
+  llvm::StringMap<llvm::codeview::TypeIndex> m_tag_scopes;
+
   /// mangled name/full function name -> Global ID(s)
   lldb_private::UniqueCStringMap<uint32_t> m_func_full_names;
   /// basename -> Global ID(s)

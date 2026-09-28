@@ -9,6 +9,8 @@ from lldbsuite.test import lldbutil
 
 
 class NestedExpressions(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def test_enum_in_nested_structs(self):
         """
         Test expressions that references an enumeration in nested structs.
