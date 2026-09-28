@@ -2,6 +2,7 @@
 Tests that frame variable and expr work for
 C++ unions and their static data members.
 """
+
 import lldb
 from lldbsuite.test.lldbtest import *
 from lldbsuite.test.decorators import *
@@ -10,6 +11,8 @@ import lldbsuite.test.lldbutil as lldbutil
 
 @requireExpressionEvaluation
 class CppUnionStaticMembersTestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def test_print_union(self):
         """Tests that frame variable and expr work
         for union with static data members"""
@@ -33,7 +36,7 @@ class CppUnionStaticMembersTestCase(TestBase):
             result_children=[ValueCheck(name="val", value="137")],
         )
 
-    @expectedFailureWindows
+    @expectedFailureAll(oslist=["windows"], debug_info=no_match(["pdb"]))
     def test_expr_union_static_members(self):
         """Tests that frame variable and expr work
         for union static data members"""

@@ -6,7 +6,11 @@ from lldbsuite.test import lldbutil
 
 
 class TestCase(TestBase):
-    @unittest.expectedFailure  # The fix for this was reverted due to llvm.org/PR52257
+    TEST_WITH_PDB_DEBUG_INFO = True
+
+    # The fix for this was reverted due to llvm.org/PR52257. PDB names the type
+    # of the member with its qualified name, so it isn't affected.
+    @expectedFailureAll(debug_info=no_match(["pdb"]))
     def test(self):
         self.build()
         self.dbg.CreateTarget(self.getBuildArtifact("a.out"))

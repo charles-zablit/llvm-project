@@ -4,5 +4,12 @@ from lldbsuite.test import decorators
 lldbinline.MakeInlineTest(
     __file__,
     globals(),
-    [lldbinline.expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr43707")],
+    [
+        lldbinline.expectedFailureAll(
+            oslist=["windows"],
+            debug_info=decorators.no_match(["pdb"]),
+            bugnumber="llvm.org/pr43707",
+        )
+    ],
+    test_with_pdb_debug_info=True,
 )

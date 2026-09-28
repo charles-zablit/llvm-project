@@ -10,6 +10,7 @@ from lldbsuite.test import lldbutil
 
 
 class TargetAPITestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
     SHARED_BUILD_TESTCASE = False
 
     def setUp(self):
@@ -57,7 +58,9 @@ class TargetAPITestCase(TestBase):
         self.build()
         self.get_description()
 
-    @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr21765")
+    @expectedFailureAll(
+        oslist=["windows"], debug_info=no_match(["pdb"]), bugnumber="llvm.org/pr21765"
+    )
     def test_resolve_symbol_context_with_address(self):
         """Exercise SBTarget.ResolveSymbolContextForAddress() API."""
         self.build()

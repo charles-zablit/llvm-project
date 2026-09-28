@@ -10,6 +10,8 @@ import lldbsuite.test.lldbutil as lldbutil
 
 
 class SignedTypesTestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
@@ -18,7 +20,10 @@ class SignedTypesTestCase(TestBase):
         self.line = line_number(self.source, "// Set break point at this line.")
 
     @expectedFailureAll(
-        oslist=["windows"], archs=["i[3-6]86", "x86_64"], bugnumber="llvm.org/pr24489"
+        oslist=["windows"],
+        debug_info=no_match(["pdb"]),
+        archs=["i[3-6]86", "x86_64"],
+        bugnumber="llvm.org/pr24489",
     )
     def test(self):
         """Test that variables with signed types display correctly."""

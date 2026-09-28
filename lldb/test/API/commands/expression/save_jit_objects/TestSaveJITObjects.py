@@ -11,6 +11,8 @@ from lldbsuite.test import lldbutil
 
 
 class SaveJITObjectsTestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def enumerateJITFiles(self):
         return [f for f in os.listdir(self.getBuildDir()) if f.startswith("jit")]
 
@@ -22,7 +24,7 @@ class SaveJITObjectsTestCase(TestBase):
             os.remove(j)
         return
 
-    @expectedFailureAll(oslist=["windows"])
+    @expectedFailureAll(oslist=["windows"], debug_info=no_match(["pdb"]))
     def test_save_jit_objects(self):
         self.build()
         os.chdir(self.getBuildDir())

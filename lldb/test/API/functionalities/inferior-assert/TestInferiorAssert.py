@@ -9,8 +9,11 @@ from lldbsuite.test.lldbtest import *
 
 @skipIfWasm  # assert() ends a WASI process, there is no signal to stop on
 class AssertingInferiorTestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     @expectedFailureAll(
         oslist=["windows"],
+        debug_info=no_match(["pdb"]),
         bugnumber="llvm.org/pr21793: need to implement support for detecting assertion / abort on Windows",
     )
     @expectedFailureAll(oslist=["linux"], archs=["arm$"], bugnumber="llvm.org/pr25338")
@@ -22,6 +25,7 @@ class AssertingInferiorTestCase(TestBase):
 
     @expectedFailureAll(
         oslist=["windows"],
+        debug_info=no_match(["pdb"]),
         bugnumber="llvm.org/pr21793: need to implement support for detecting assertion / abort on Windows",
     )
     @expectedFailureAndroid(api_levels=list(range(16 + 1)))  # b.android.com/179836
@@ -32,6 +36,7 @@ class AssertingInferiorTestCase(TestBase):
 
     @expectedFailureAll(
         oslist=["windows"],
+        debug_info=no_match(["pdb"]),
         bugnumber="llvm.org/pr21793: need to implement support for detecting assertion / abort on Windows",
     )
     @expectedFailureAll(
@@ -58,6 +63,7 @@ class AssertingInferiorTestCase(TestBase):
 
     @expectedFailureAll(
         oslist=["windows"],
+        debug_info=no_match(["pdb"]),
         bugnumber="llvm.org/pr21793: need to implement support for detecting assertion / abort on Windows",
     )
     @expectedFailureAll(
@@ -74,6 +80,7 @@ class AssertingInferiorTestCase(TestBase):
 
     @expectedFailureAll(
         oslist=["windows"],
+        debug_info=no_match(["pdb"]),
         bugnumber="llvm.org/pr21793: need to implement support for detecting assertion / abort on Windows",
     )
     @expectedFailureAll(

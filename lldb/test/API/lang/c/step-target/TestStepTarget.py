@@ -8,6 +8,8 @@ from lldbsuite.test import lldbutil
 
 
 class TestStepTarget(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
@@ -27,7 +29,9 @@ class TestStepTarget(TestBase):
 
         return thread
 
-    @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr32343")
+    @expectedFailureAll(
+        oslist=["windows"], debug_info=no_match(["pdb"]), bugnumber="llvm.org/pr32343"
+    )
     def test_with_end_line(self):
         """Test stepping over vrs. hitting breakpoints & subsequent stepping in various forms."""
 
@@ -39,7 +43,9 @@ class TestStepTarget(TestBase):
 
         self.assertEqual(frame.name, "lotsOfArgs", "Stepped to lotsOfArgs.")
 
-    @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr32343")
+    @expectedFailureAll(
+        oslist=["windows"], debug_info=no_match(["pdb"]), bugnumber="llvm.org/pr32343"
+    )
     def test_with_end_line_bad_name(self):
         """Test stepping over vrs. hitting breakpoints & subsequent stepping in various forms."""
 
@@ -62,7 +68,9 @@ class TestStepTarget(TestBase):
         frame = thread.frames[0]
         self.assertEqual(frame.name, "modifyInt", "Stepped to modifyInt.")
 
-    @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr32343")
+    @expectedFailureAll(
+        oslist=["windows"], debug_info=no_match(["pdb"]), bugnumber="llvm.org/pr32343"
+    )
     def test_with_command_and_block(self):
         """Test stepping over vrs. hitting breakpoints & subsequent stepping in various forms."""
         self.do_command_and_block()
@@ -79,7 +87,9 @@ class TestStepTarget(TestBase):
         frame = thread.frames[0]
         self.assertEqual(frame.name, "lotsOfArgs", "Stepped to lotsOfArgs.")
 
-    @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr32343")
+    @expectedFailureAll(
+        oslist=["windows"], debug_info=no_match(["pdb"]), bugnumber="llvm.org/pr32343"
+    )
     def test_with_command_and_block_and_bad_name(self):
         """Test stepping over vrs. hitting breakpoints & subsequent stepping in various forms."""
         self.do_with_command_and_block_and_bad_name()
