@@ -2188,10 +2188,11 @@ class LLDBTestCaseFactory(type):
                             if enabled
                         ]
 
-                    # PDB is off by default, because it has a lot of failures right now.
-                    # See llvm.org/pr149498
-                    if original_testcase.TEST_WITH_PDB_DEBUG_INFO:
-                        dbginfo_categories.append("pdb")
+                        # PDB is off by default, because it has a lot of failures
+                        # right now. See llvm.org/pr149498. Explicitly tagged
+                        # categories stay authoritative.
+                        if original_testcase.TEST_WITH_PDB_DEBUG_INFO:
+                            dbginfo_categories.append("pdb")
 
                     xfail_fns = getattr(attrvalue, "__variant_xfail__", {})
                     skip_fns = getattr(attrvalue, "__variant_skip__", {})
