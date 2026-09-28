@@ -9,6 +9,7 @@ from lldbsuite.test import lldbutil
 
 
 class CompileUnitAPITestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
     SHARED_BUILD_TESTCASE = False
 
     def test(self):
