@@ -2433,7 +2433,9 @@ SymbolFileNativePDB::ParseVariablesForCompileUnit(CompileUnit &comp_unit,
     case SymbolKind::S_LDATA32:
     case SymbolKind::S_GTHREAD32:
     case SymbolKind::S_LTHREAD32: {
-      if (VariableSP var = GetOrCreateGlobalVariable(global))
+      // The globals stream covers all compile units.
+      VariableSP var = GetOrCreateGlobalVariable(global);
+      if (var && var->GetSymbolContextScope() == &comp_unit)
         variables.AddVariable(var);
       break;
     }
