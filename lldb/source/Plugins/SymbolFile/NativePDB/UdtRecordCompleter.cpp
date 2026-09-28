@@ -204,7 +204,13 @@ Error UdtRecordCompleter::visitKnownMember(
           min_constant_width = constant.Value.getSignificantBits();
 
         if (qual_type->isIntegralOrEnumerationType()) {
-          if (type_width >= min_constant_width) {
+          if (!IsConstantValueKnown(constant.Value, type_width)) {
+            LLDB_LOG(GetLog(LLDBLog::AST),
+                     "Class '{0}' has a member '{1}' of type '{2}' ({3} bits) "
+                     "whose constant value was saturated. Ignoring constant.",
+                     m_derived_ct.GetTypeName(), static_data_member.Name,
+                     member_ct.GetTypeName(), type_width);
+          } else if (type_width >= min_constant_width) {
             TypeSystemClang::SetIntegerInitializerForVariable(
                 decl, constant.Value.extOrTrunc(type_width));
           } else {

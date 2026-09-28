@@ -19,7 +19,6 @@
 #include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/CodeView/TypeIndex.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
-#include "llvm/Support/Endian.h"
 
 #include "PdbUtil.h"
 #include "CodeViewRegisterMapping.h"
@@ -53,6 +52,7 @@ static uint32_t GetRegisterNumber(llvm::Triple::ArchType arch_type,
 
 static bool IsSimpleTypeSignedInteger(SimpleTypeKind kind) {
   switch (kind) {
+  case SimpleTypeKind::Int128Oct:
   case SimpleTypeKind::Int128:
   case SimpleTypeKind::Int64:
   case SimpleTypeKind::Int64Quad:
@@ -292,24 +292,17 @@ lldb_private::npdb::MakeConstantLocationExpression(TypeIndex underlying_ti,
     return type_info.takeError();
   auto [size, is_signed] = *type_info;
 
-  union {
-    llvm::support::little64_t I;
-    llvm::support::ulittle64_t U;
-  } Value;
+  if (!IsConstantValueKnown(constant, size * 8))
+    return llvm::createStringError("constant value was saturated");
 
-  std::shared_ptr<DataBufferHeap> buffer = std::make_shared<DataBufferHeap>();
-  buffer->SetByteSize(size);
-
-  llvm::ArrayRef<uint8_t> bytes;
-  if (is_signed) {
-    Value.I = constant.getSExtValue();
-  } else {
-    Value.U = constant.getZExtValue();
-  }
-
-  bytes = llvm::ArrayRef(reinterpret_cast<const uint8_t *>(&Value), 8)
-              .take_front(size);
-  buffer->CopyData(bytes.data(), size);
+  // Types can be wider than 64 bits (__int128), so extend the value to the
+  // size of the type before writing it out.
+  llvm::APInt value = is_signed ? constant.sextOrTrunc(size * 8)
+                                : constant.zextOrTrunc(size * 8);
+  std::shared_ptr<DataBufferHeap> buffer =
+      std::make_shared<DataBufferHeap>(size, 0);
+  for (size_t i = 0; i < size; ++i)
+    buffer->GetBytes()[i] = value.extractBitsAsZExtValue(8, i * 8);
   DataExtractor extractor(buffer, lldb::eByteOrderLittle, address_size);
   DWARFExpression result(extractor);
   return result;

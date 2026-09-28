@@ -1148,6 +1148,15 @@ template <typename RecordType> static size_t GetSizeOfTypeInternal(CVType cvt) {
   return record.getSize();
 }
 
+bool lldb_private::npdb::IsConstantValueKnown(const llvm::APSInt &value,
+                                              unsigned type_bits) {
+  if (type_bits <= 64 || value.getBitWidth() != 64)
+    return true;
+  if (value.isSigned())
+    return !value.isMinSignedValue() && !value.isMaxSignedValue();
+  return !value.isMaxValue();
+}
+
 size_t lldb_private::npdb::GetSizeOfType(PdbTypeSymId id,
                                          llvm::pdb::TpiStream &tpi) {
   if (id.index.isSimple()) {

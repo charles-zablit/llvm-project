@@ -166,6 +166,15 @@ GetEnumUnderlyingType(const llvm::codeview::EnumRecord &er);
 
 size_t GetSizeOfType(PdbTypeSymId id, llvm::pdb::TpiStream &tpi);
 
+/// Whether \p value, read from an S_CONSTANT of a \p type_bits wide integer
+/// type, is the real value.
+///
+/// A CodeView numeric leaf holds at most 64 bits. LLVM saturates a wider value
+/// that doesn't fit (CodeViewRecordIO::mapEncodedInteger), and older versions
+/// wrote INT64_MIN for every signed 128-bit value, so a saturated 64-bit value
+/// of a wider type is unknown rather than the real one.
+bool IsConstantValueKnown(const llvm::APSInt &value, unsigned type_bits);
+
 std::optional<PdbTypeSymId> GetFunctionType(llvm::codeview::CVSymbol symbol);
 
 } // namespace npdb

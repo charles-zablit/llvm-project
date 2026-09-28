@@ -11,6 +11,8 @@ from lldbsuite.test import lldbutil
 
 @requireExpressionEvaluation
 class TestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     # int128 is not available on 32-bit ARM.
     @skipIf(archs=["arm$"])
     def test_int128(self):
@@ -18,6 +20,16 @@ class TestCase(TestBase):
         lldbutil.run_to_source_breakpoint(
             self, "// break here", lldb.SBFileSpec("main.cpp")
         )
+
+        if self.getDebugInfo() == "pdb":
+            # CodeView has the values in S_CONSTANT records. A numeric leaf
+            # holds at most 64 bits, which is enough here: MSVC's
+            # numeric_limits has no __int128 specialization, so all four
+            # members are 0.
+            for name in ["int128_max", "uint128_max", "int128_min", "uint128_min"]:
+                local = self.frame().FindVariable(name)
+                self.expect_expr("A::" + name, result_value=local.GetValue())
+            return
 
         # Try to use the (u)int128_t data members which are not supported at
         # the moment. Just verify that LLDB doesn't report an incorrect value
