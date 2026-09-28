@@ -3561,6 +3561,12 @@ SymbolFileNativePDB::GetContextForType(TypeIndex ti) {
   if (!parsed_name)
     return {{tag.contextKind(), ConstString(tag.name())}};
 
+  // A function-local type (Scoped) is named after its function, e.g.
+  // "main::Local". Like SymbolFileDWARF, whose lookup context stops at the
+  // enclosing DW_TAG_subprogram, look it up by its own name only.
+  if (tag.asTag().isScoped())
+    return {{tag.contextKind(), ConstString(parsed_name->basename)}};
+
   std::vector<CompilerContext> ctx;
   // assume everything is a namespace at first
   for (llvm::StringRef scope : parsed_name->scope) {
