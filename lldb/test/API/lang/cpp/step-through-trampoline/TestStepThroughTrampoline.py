@@ -6,6 +6,8 @@ from lldbsuite.test.decorators import *
 
 @skipIfTargetDoesNotSupportSharedLibraries()
 class StepThroughTrampoline(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def test(self):
         self.build()
         (target, process, thread, bkpt) = lldbutil.run_to_source_breakpoint(

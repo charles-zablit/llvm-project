@@ -13,6 +13,8 @@ from lldbsuite.test.lldbtest import *
 
 
 class TestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     def test_breakpoints_on_initializers(self):
         """Show we can set breakpoints on initializers appearing both before
         and after the constructor body, and hit them."""

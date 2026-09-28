@@ -5,6 +5,8 @@ from lldbsuite.test import lldbutil
 
 
 class TestStructuredBinding(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     @skipIf(oslist=["linux"], archs=["arm$"])
     @skipIf(compiler="clang", compiler_version=["<", "14.0"])
     def test(self):
