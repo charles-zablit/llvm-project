@@ -940,13 +940,27 @@ clang::QualType PdbAstBuilderClang::CreateType(PdbTypeSymId type) {
       return {};
     }
     unsigned int type_quals = 0;
+    clang::RefQualifierKind ref_qual = clang::RQ_None;
     if (!mfr.ThisType.isNoneType()) {
       clang::QualType this_type = GetOrCreateClangType(mfr.getThisType());
       if (!this_type.isNull())
         type_quals = this_type->getPointeeType().getLocalFastQualifiers();
+
+      // The ref-qualifier of a method is an option of its `this` pointer.
+      CVType this_cvt = index.tpi().getType(mfr.getThisType());
+      PointerRecord this_ptr;
+      if (this_cvt.kind() == LF_POINTER &&
+          !TypeDeserializer::deserializeAs<PointerRecord>(this_cvt, this_ptr)) {
+        if ((this_ptr.getOptions() & PointerOptions::LValueRefThisPointer) !=
+            PointerOptions::None)
+          ref_qual = clang::RQ_LValue;
+        else if ((this_ptr.getOptions() &
+                  PointerOptions::RValueRefThisPointer) != PointerOptions::None)
+          ref_qual = clang::RQ_RValue;
+      }
     }
     return CreateFunctionType(mfr.ArgumentList, mfr.ReturnType, mfr.CallConv,
-                              type_quals);
+                              type_quals, ref_qual);
   }
 
   return {};
@@ -1480,7 +1494,7 @@ clang::QualType PdbAstBuilderClang::CreateArrayType(const ArrayRecord &ar) {
 clang::QualType PdbAstBuilderClang::CreateFunctionType(
     TypeIndex args_type_idx, TypeIndex return_type_idx,
     llvm::codeview::CallingConvention calling_convention,
-    unsigned int type_quals) {
+    unsigned int type_quals, clang::RefQualifierKind ref_qual) {
   SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
   PdbIndex &index = pdb->GetIndex();
@@ -1521,7 +1535,7 @@ clang::QualType PdbAstBuilderClang::CreateFunctionType(
 
   CompilerType return_ct = ToCompilerType(return_type);
   CompilerType func_sig_ast_type = m_clang.CreateFunctionType(
-      return_ct, arg_types, is_variadic, type_quals, *cc);
+      return_ct, arg_types, is_variadic, type_quals, *cc, ref_qual);
 
   return clang::QualType::getFromOpaquePtr(
       func_sig_ast_type.GetOpaqueQualType());

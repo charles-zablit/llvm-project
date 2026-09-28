@@ -121,7 +121,8 @@ private:
   clang::QualType
   CreateFunctionType(TypeIndex args_type_idx, TypeIndex return_type_idx,
                      llvm::codeview::CallingConvention calling_convention,
-                     unsigned int type_quals);
+                     unsigned int type_quals,
+                     clang::RefQualifierKind ref_qual = clang::RQ_None);
   clang::QualType CreateType(PdbTypeSymId type);
 
   void CreateFunctionParameters(PdbCompilandSymId func_id,
