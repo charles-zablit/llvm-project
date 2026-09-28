@@ -5,6 +5,8 @@ from lldbsuite.test import lldbutil
 
 
 class TestFunctionTemplateSpecializationTempArgs(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     @skipIf(oslist=["windows"], archs=["aarch64"])
     def test_function_template_specialization_temp_args(self):
         self.build()
@@ -13,4 +15,6 @@ class TestFunctionTemplateSpecializationTempArgs(TestBase):
             self, "// break here", lldb.SBFileSpec("main.cpp", False)
         )
 
-        self.expect_expr("p0", result_type="VType", result_children=[])
+        # With PDB, p0 has the type that the VType typedef names.
+        vtype = "M<int>" if self.getDebugInfo() == "pdb" else "VType"
+        self.expect_expr("p0", result_type=vtype, result_children=[])
