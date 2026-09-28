@@ -10,6 +10,8 @@ from lldbsuite.test import lldbutil
 
 
 class BreakpointByLineAndColumnTestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+
     ## Skip gcc version less 7.1 since it doesn't support -gcolumn-info
     @skipIf(compiler="gcc", compiler_version=["<", "7.1"])
     def testBreakpointByLineAndColumn(self):
