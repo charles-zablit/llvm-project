@@ -8,6 +8,8 @@
 ; struct test {
 ;   static const __uint128_t u128 = __uint128_t(1) << 64;
 ;   static const __int128    s128 = -(__int128(1) << 64);
+;   static const __int128    s128_big = __int128(1) << 64;
+;   static const __int128    s128_small = -5;
 ; };
 ; test t3() { return test(); }
 ; 
@@ -31,6 +33,20 @@
 ; ASM-NEXT:  .byte	0x00, 0x00, 0x00, 0x00
 ; ASM-NEXT:  .byte	0x00, 0x80
 ; ASM-NEXT:  .asciz	"test::s128"                    # Name
+; ASM-NEXT:  .p2align	2
+;
+; ASM-LABEL: .short	4359                            # Record kind: S_CONSTANT
+; ASM-NEXT:  .long	4111                            # Type
+; ASM-NEXT:  .byte	0x09, 0x80, 0xff, 0xff          # Value
+; ASM-NEXT:  .byte	0xff, 0xff, 0xff, 0xff
+; ASM-NEXT:  .byte	0xff, 0x7f
+; ASM-NEXT:  .asciz	"test::s128_big"                # Name
+; ASM-NEXT:  .p2align	2
+;
+; ASM-LABEL: .short	4359                            # Record kind: S_CONSTANT
+; ASM-NEXT:  .long	4111                            # Type
+; ASM-NEXT:  .byte	0x00, 0x80, 0xfb                # Value
+; ASM-NEXT:  .asciz	"test::s128_small"              # Name
 ; ASM-NEXT:  .p2align	2
 ;
 ; ASM-LABEL: .short	0x1203                          # Record kind: LF_FIELDLIST
@@ -125,9 +141,11 @@ attributes #1 = { mustprogress noinline nounwind optnone "frame-pointer"="none" 
 !33 = !DISubroutineType(types: !34)
 !34 = !{!35}
 !35 = distinct !DICompositeType(tag: DW_TAG_structure_type, name: "test", file: !4, line: 10, size: 8, flags: DIFlagTypePassByValue, elements: !36, identifier: "_ZTS4test")
-!36 = !{!37, !39}
+!36 = !{!37, !39, !42, !43}
 !37 = !DIDerivedType(tag: DW_TAG_member, name: "u128", scope: !35, file: !4, line: 11, baseType: !38, flags: DIFlagStaticMember, extraData: i128 18446744073709551616)
 !38 = !DIDerivedType(tag: DW_TAG_const_type, baseType: !5)
 !39 = !DIDerivedType(tag: DW_TAG_member, name: "s128", scope: !35, file: !4, line: 12, baseType: !40, flags: DIFlagStaticMember, extraData: i128 -18446744073709551616)
 !40 = !DIDerivedType(tag: DW_TAG_const_type, baseType: !11)
 !41 = !DILocation(line: 14, column: 13, scope: !32)
+!42 = !DIDerivedType(tag: DW_TAG_member, name: "s128_big", scope: !35, file: !4, line: 13, baseType: !40, flags: DIFlagStaticMember, extraData: i128 18446744073709551616)
+!43 = !DIDerivedType(tag: DW_TAG_member, name: "s128_small", scope: !35, file: !4, line: 14, baseType: !40, flags: DIFlagStaticMember, extraData: i128 -5)

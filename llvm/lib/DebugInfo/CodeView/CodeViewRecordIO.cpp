@@ -198,9 +198,14 @@ Error CodeViewRecordIO::mapEncodedInteger(APSInt &Value, const Twine &Comment) {
     else
       emitEncodedUnsignedInteger(Value.getZExtValue(), Comment);
   } else if (isWriting()) {
-    if (Value.isSigned())
-      return writeEncodedSignedInteger(
-          Value.isSingleWord() ? Value.getSExtValue() : INT64_MIN);
+    // Numeric leaves hold at most 64 bits, so saturate wider values. A value
+    // of a wider type that fits, like 0 in an __int128, is written as is.
+    if (Value.isSigned()) {
+      if (Value.isSignedIntN(64))
+        return writeEncodedSignedInteger(Value.getSExtValue());
+      return writeEncodedSignedInteger(Value.isNegative() ? INT64_MIN
+                                                          : INT64_MAX);
+    }
     return writeEncodedUnsignedInteger(Value.getLimitedValue());
   } else
     return consume(*Reader, Value);
