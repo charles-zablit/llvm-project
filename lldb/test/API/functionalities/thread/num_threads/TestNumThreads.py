@@ -71,7 +71,6 @@ class NumberOfThreadsTestCase(TestBase):
         )
 
     @skipIfDarwin  # rdar://33462362
-    @skipIfWindows  # This is flakey on Windows: llvm.org/pr37658, llvm.org/pr38373
     def test_unique_stacks(self):
         """Test backtrace unique with multiple threads executing the same stack."""
         self.build()
@@ -124,11 +123,15 @@ class NumberOfThreadsTestCase(TestBase):
                 continue
 
             # If we aren't stopped out the thread breakpoint try to resume.
+            # "thread continue" and "thread backtrace unique" use index IDs,
+            # which need not match the position in the thread list: the
+            # in-process Windows plugin lists threads in thread ID order.
+            index_id = thread.GetIndexID()
             if thread.GetStopReason() != lldb.eStopReasonBreakpoint:
-                self.runCmd("thread continue %d" % (i + 1))
+                self.runCmd("thread continue %d" % index_id)
             self.assertStopReason(thread.GetStopReason(), lldb.eStopReasonBreakpoint)
 
-            expect_threads += " #%d" % (i + 1)
+            expect_threads += " #%d" % index_id
 
         # Construct our expected back trace string
         expect_string = "10 thread(s)%s" % (expect_threads)

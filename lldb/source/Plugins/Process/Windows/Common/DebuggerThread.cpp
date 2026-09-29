@@ -259,6 +259,21 @@ void DebuggerThread::ContinueAsyncException(ExceptionResult result) {
   m_exception_pred.SetValue(result, eBroadcastAlways);
 }
 
+void DebuggerThread::ReportDeferredStopAndWaitForResume() {
+  // Hold the debug loop until the client resumes, on the predicate the DLL
+  // events park on: once the drained exceptions have been continued no
+  // exception is active, so Resume() wakes it through ContinueAsyncDllEvent(),
+  // and so does StopDebugging(). Events that arrive after the stop reply stay
+  // queued until then. Handling them now would change the threads (a thread
+  // created or exited, a stop reason or PC rewritten) while the client reads
+  // them, e.g. jThreadsInfo iterating the threads of a stop that a
+  // CREATE_THREAD_DEBUG_EVENT for a late thread is still extending.
+  m_dll_event_pred.SetValue(false, eBroadcastNever);
+  m_debug_delegate->ReportDeferredStop();
+  if (!m_is_shutting_down)
+    m_dll_event_pred.WaitForValueEqualTo(true);
+}
+
 void DebuggerThread::ContinueAsyncDllEvent() {
   m_dll_event_pred.SetValue(true, eBroadcastAlways);
 }
@@ -276,10 +291,40 @@ void DebuggerThread::DebugLoop() {
   Log *log = GetLog(WindowsLog::Event);
   DEBUG_EVENT dbe = {};
   bool should_debug = true;
+  // Events taken while the delegate collects a stop. A thread that could not
+  // be suspended can keep raising exceptions, so the stop is reported after
+  // this many at the latest.
+  constexpr unsigned max_drained_events = 64;
+  unsigned drained_events = 0;
   LLDB_LOG_VERBOSE(log, "Entering WaitForDebugEventEx loop");
   while (should_debug) {
+    // While the delegate holds a stop it has not reported, only take the debug
+    // events that are already queued, and report the stop once there are
+    // none left. Windows hands out one debug event per process at a time:
+    // when several threads trap together, the others' events are only
+    // returned once the first one is continued. Taking them now puts every
+    // thread that trapped into the one stop reply. Taking them after the reply
+    // would change stop reasons and PCs the client has already been told.
+    bool draining = !m_is_shutting_down && m_debug_delegate->HasDeferredStop();
+    if (draining && drained_events >= max_drained_events) {
+      LLDB_LOG(log, "reporting the stop after taking {0} queued debug events",
+               drained_events);
+      ReportDeferredStopAndWaitForResume();
+      draining = false;
+    }
+    if (!draining)
+      drained_events = 0;
     LLDB_LOG_VERBOSE(log, "Calling WaitForDebugEvent");
-    BOOL wait_result = g_wait_for_debug_event(&dbe, INFINITE);
+    BOOL wait_result = g_wait_for_debug_event(&dbe, draining ? 0 : INFINITE);
+    if (draining) {
+      if (!wait_result) {
+        // Nothing else is queued (ERROR_SEM_TIMEOUT). After any other error
+        // the blocking wait of the next iteration fails too and ends the loop.
+        ReportDeferredStopAndWaitForResume();
+        continue;
+      }
+      ++drained_events;
+    }
     if (wait_result) {
       DWORD continue_status = DBG_CONTINUE;
       bool shutting_down = m_is_shutting_down;
@@ -430,8 +475,12 @@ DebuggerThread::HandleExceptionEvent(const EXCEPTION_DEBUG_INFO &info,
   // result is not BreakInDebugger, continue it here, or the wait below never
   // ends. If the other thread already continued it, this does nothing and its
   // result is what the wait below returns.
-  if (result != ExceptionResult::BreakInDebugger)
+  if (result != ExceptionResult::BreakInDebugger) {
     ContinueAsyncException(result);
+  } else {
+    // The wait below lasts until the client resumes, so report the stop now.
+    m_debug_delegate->ReportDeferredStop();
+  }
 
   LLDB_LOG(log, "waiting for ExceptionPred != BreakInDebugger");
   result = *m_exception_pred.WaitForValueNotEqualTo(
@@ -785,8 +834,12 @@ DebuggerThread::HandleLoadDllEvent(const LOAD_DLL_DEBUG_INFO &info,
   if (info.hFile != nullptr)
     ::CloseHandle(info.hFile);
 
-  if (action == DllEventAction::ParkDebugLoop && !m_is_shutting_down.load())
+  if (action == DllEventAction::ParkDebugLoop && !m_is_shutting_down.load()) {
+    // Parked until the client resumes, so report a stop collected before this
+    // event now.
+    m_debug_delegate->ReportDeferredStop();
     m_dll_event_pred.WaitForValueEqualTo(true);
+  }
   return DBG_CONTINUE;
 }
 
@@ -800,8 +853,11 @@ DebuggerThread::HandleUnloadDllEvent(const UNLOAD_DLL_DEBUG_INFO &info,
   m_dll_event_pred.SetValue(false, eBroadcastNever);
   DllEventAction action = m_debug_delegate->OnUnloadDll(
       reinterpret_cast<lldb::addr_t>(info.lpBaseOfDll), thread_id);
-  if (action == DllEventAction::ParkDebugLoop && !m_is_shutting_down.load())
+  if (action == DllEventAction::ParkDebugLoop && !m_is_shutting_down.load()) {
+    // See HandleLoadDllEvent().
+    m_debug_delegate->ReportDeferredStop();
     m_dll_event_pred.WaitForValueEqualTo(true);
+  }
   return DBG_CONTINUE;
 }
 

@@ -37,6 +37,14 @@ public:
                                    lldb::tid_t thread_id) = 0;
   virtual DllEventAction OnUnloadDll(lldb::addr_t module_addr,
                                      lldb::tid_t thread_id) = 0;
+  /// True while the delegate holds a stop it has not reported yet. The
+  /// DebuggerThread then only takes debug events that are already queued, so
+  /// that exceptions several threads raised at once end up in one stop.
+  virtual bool HasDeferredStop() { return false; }
+  /// Report the stop the delegate holds, if any. Called on the DebuggerThread
+  /// once no more debug events are queued, and before it blocks until the
+  /// client resumes.
+  virtual void ReportDeferredStop() {}
   virtual void OnDebugString(lldb::addr_t debug_string_addr, bool is_unicode,
                              uint16_t length_lower_word) = 0;
   virtual void OnDebuggerError(const Status &error, uint32_t type) = 0;
