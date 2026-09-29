@@ -521,8 +521,8 @@ void NativeProcessWindows::OnExitProcess(uint32_t exit_code) {
   Log *log = GetLog(WindowsLog::Process);
   LLDB_LOG(log, "Process {0} exited with code {1}", GetID(), exit_code);
 
-  // Closing the ConPTY signals EOF on the parent-side STDOUT pipe so the
-  // read thread can exit. Tear it down before the debuggee is destroyed.
+  // Forward the debuggee's last output before reporting the exit, then stop
+  // the read thread. Tear it down before the debuggee is destroyed.
   StopStdioForwarding();
 
   ProcessDebugger::OnExitProcess(exit_code);
@@ -968,14 +968,45 @@ void NativeProcessWindows::StopStdioForwarding() {
   if (!m_stdio_communication.HasConnection())
     return;
 
+  DrainStdout();
+
   if (m_pty)
     m_pty->Close();
 
-  if (m_stdio_communication.ReadThreadIsRunning())
-    m_stdio_communication.JoinReadThread();
+  // Don't wait for EOF: this runs while EXIT_PROCESS_DEBUG_EVENT is pending, so
+  // the debuggee still holds the pipe's write end, and the CancelIoEx in
+  // Close() misses a read issued right after it. Either way the join would
+  // never return.
+  m_stdio_communication.InterruptRead();
+  m_stdio_communication.StopReadThread();
 
   if (m_stdio_communication.HasConnection())
     m_stdio_communication.Disconnect();
+}
+
+void NativeProcessWindows::DrainStdout() {
+  if (!m_stdio_communication.ReadThreadIsRunning())
+    return;
+  m_stdio_communication.SynchronizeWithReadThread();
+  if (!m_pty || m_pty->GetMode() != PseudoConsole::Mode::ConPTY)
+    return;
+
+  HANDLE pipe = m_pty->GetSTDOUTHandle();
+  for (int consec_empty = 0; consec_empty < 3;) {
+    if (!m_stdio_communication.ReadThreadIsRunning())
+      break;
+    DWORD avail = 0;
+    if (!::PeekNamedPipe(pipe, nullptr, 0, nullptr, &avail, nullptr))
+      break;
+    if (avail > 0) {
+      consec_empty = 0;
+      m_stdio_communication.SynchronizeWithReadThread();
+    } else {
+      ++consec_empty;
+      if (consec_empty < 3)
+        ::SleepEx(1, FALSE);
+    }
+  }
 }
 
 void NativeProcessWindows::STDIOReadThreadBytesReceived(void *baton,

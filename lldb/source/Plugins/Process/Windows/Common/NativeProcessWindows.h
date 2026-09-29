@@ -207,6 +207,9 @@ private:
 
   /// Tear down the read thread and disconnect m_stdio_communication.
   void StopStdioForwarding();
+
+  /// Let the read thread forward whatever is buffered in the STDOUT pipe.
+  void DrainStdout();
 };
 
 //------------------------------------------------------------------
