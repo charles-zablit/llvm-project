@@ -145,8 +145,13 @@ Status ProcessWindows::EnableBreakpointSite(BreakpointSite *bp_site) {
            bp_site->GetID(), bp_site->GetLoadAddress());
 
   Status error = EnableSoftwareBreakpoint(bp_site);
-  if (!error.Success())
+  if (!error.Success()) {
     LLDB_LOG(log, "error: {0}", error);
+    return error;
+  }
+
+  llvm::sys::ScopedLock lock(m_mutex);
+  m_removed_breakpoint_traps.erase(bp_site->GetLoadAddress());
   return error;
 }
 
@@ -156,10 +161,119 @@ Status ProcessWindows::DisableBreakpointSite(BreakpointSite *bp_site) {
            bp_site->GetID(), bp_site->GetLoadAddress());
 
   Status error = DisableSoftwareBreakpoint(bp_site);
-
-  if (!error.Success())
+  if (!error.Success()) {
     LLDB_LOG(log, "error: {0}", error);
+    return error;
+  }
+
+  // Another thread may already have executed this trap, with its exception
+  // event still queued in the kernel. Remember the trap so that the event can
+  // be recognized when it arrives.
+  if (const size_t size = bp_site->GetByteSize()) {
+    const uint8_t *trap = bp_site->GetTrapOpcodeBytes();
+    llvm::sys::ScopedLock lock(m_mutex);
+    m_removed_breakpoint_traps[bp_site->GetLoadAddress()].opcode.assign(
+        trap, trap + size);
+  }
   return error;
+}
+
+bool ProcessWindows::IsLateSingleStepTrap(const ExceptionRecord &record) {
+  // This plugin reports one exception per stop. When the client single-steps
+  // several threads together (to move them over a breakpoint), the others'
+  // trace traps are only delivered after the next resume, when their steps
+  // have already been reported as done. A trap on a thread that resume did
+  // not step, and that no hardware watchpoint raised, is such a late trap.
+  auto thread = std::static_pointer_cast<TargetThreadWindows>(
+      m_thread_list_real.FindThreadByID(record.GetThreadID(),
+                                        /*can_update=*/false));
+  if (!thread || thread->IsSingleStepping())
+    return false;
+  auto *reg_ctx =
+      static_cast<RegisterContextWindows *>(thread->GetRegisterContext().get());
+  // The cached values are from the last stop, before the thread ran.
+  reg_ctx->InvalidateAllRegisters();
+  if (reg_ctx->GetTriggeredHardwareBreakpointSlotId() != LLDB_INVALID_INDEX32)
+    return false;
+  LLDB_LOG(GetLog(WindowsLog::Exception),
+           "ignoring a late single-step trap on thread {0:x}, which this "
+           "resume did not step",
+           record.GetThreadID());
+  return true;
+}
+
+bool ProcessWindows::HandleRemovedBreakpointTrap(
+    const ExceptionRecord &record) {
+  if (m_removed_breakpoint_traps.empty())
+    return false;
+
+  // m_thread_list_real, not m_thread_list: only the real threads are
+  // TargetThreadWindows, m_thread_list can hold OS plugin threads.
+  const lldb::tid_t tid = record.GetThreadID();
+  ThreadSP thread =
+      m_thread_list_real.FindThreadByID(tid, /*can_update=*/false);
+  if (!thread) {
+    auto new_it = m_session_data->m_new_threads.find(tid);
+    if (new_it != m_session_data->m_new_threads.end())
+      thread = new_it->second;
+  }
+  if (!thread)
+    return false;
+  RegisterContextSP reg_ctx = thread->GetRegisterContext();
+  if (!reg_ctx)
+    return false;
+
+  // Read and write the PC register directly. RegisterContext::GetPC/SetPC also
+  // go through the Target and the thread's stack frames, and SetPC unwinds
+  // frame 0, which this thread must not do while the process is running.
+  const uint32_t pc_reg = reg_ctx->ConvertRegisterKindToRegisterNumber(
+      eRegisterKindGeneric, LLDB_REGNUM_GENERIC_PC);
+  // The cached values are from the last stop, before the thread ran the trap.
+  reg_ctx->InvalidateAllRegisters();
+  const lldb::addr_t pc =
+      reg_ctx->ReadRegisterAsUnsigned(pc_reg, LLDB_INVALID_ADDRESS);
+  if (pc == LLDB_INVALID_ADDRESS)
+    return false;
+
+  // As in RefreshStateAfterStop, the PC is after the trap opcode on all
+  // architectures, so look for a removed trap that ends at the PC.
+  auto it = m_removed_breakpoint_traps.lower_bound(pc > 8 ? pc - 8 : 0);
+  while (it != m_removed_breakpoint_traps.end() && it->first < pc &&
+         it->first + it->second.opcode.size() != pc)
+    ++it;
+  if (it == m_removed_breakpoint_traps.end() || it->first >= pc)
+    return false;
+  const lldb::addr_t addr = it->first;
+  RemovedBreakpointTrap &trap = it->second;
+
+  // A site at the address again means this is a hit on that site.
+  if (GetBreakpointSiteList().FindByAddress(addr))
+    return false;
+
+  // A thread has at most one debug event in flight, so it can execute a
+  // removed trap only once. A second trap from the same thread comes from the
+  // restored instruction itself.
+  if (llvm::is_contained(trap.rewound_threads, tid))
+    return false;
+
+  // If the trap opcode is in memory again, this is a trap in the program
+  // itself, not one of ours.
+  llvm::SmallVector<uint8_t, 4> bytes(trap.opcode.size());
+  size_t bytes_read = 0;
+  if (ProcessDebugger::ReadMemory(addr, bytes.data(), bytes.size(), bytes_read)
+          .Fail() ||
+      bytes_read != bytes.size() || bytes == trap.opcode)
+    return false;
+
+  if (!reg_ctx->WriteRegisterFromUnsigned(pc_reg, addr))
+    return false;
+  trap.rewound_threads.push_back(tid);
+
+  LLDB_LOG(GetLog(WindowsLog::Exception | WindowsLog::Breakpoints),
+           "Thread {0:x} executed the trap of removed breakpoint site at "
+           "{1:x}. Moved its PC back to {1:x} and continuing.",
+           tid, addr);
+  return true;
 }
 
 Status ProcessWindows::DoDetach(bool keep_stopped) {
@@ -177,13 +291,17 @@ Status ProcessWindows::DoDetach(bool keep_stopped) {
                  GetPrivateState());
 
         LLDB_LOG(log, "resuming {0} threads for detach.",
-                 m_thread_list.GetSize());
+                 m_thread_list_real.GetSize());
 
         bool failed = false;
-        for (uint32_t i = 0; i < m_thread_list.GetSize(); ++i) {
+        for (uint32_t i = 0; i < m_thread_list_real.GetSize(); ++i) {
           auto thread = std::static_pointer_cast<TargetThreadWindows>(
-              m_thread_list.GetThreadAtIndex(i));
-          Status result = thread->DoResume();
+              m_thread_list_real.GetThreadAtIndex(i));
+          // Run every thread after the detach, whatever the last resume did:
+          // after a stop-others step the temporary resume state would set the
+          // trap flag on the stepping thread again and leave every other
+          // thread suspended in the detached process.
+          Status result = thread->DoResume(eStateRunning);
           if (result.Fail()) {
             failed = true;
             LLDB_LOG(log,
@@ -255,12 +373,16 @@ Status ProcessWindows::DoResume(RunDirection direction) {
              m_session_data->m_debugger->GetProcess().GetProcessId(),
              GetPrivateState());
 
-    LLDB_LOG(log, "resuming {0} threads.", m_thread_list.GetSize());
+    // Resume the threads this plugin created. With an operating system
+    // plugin, m_thread_list holds that plugin's threads instead, which are not
+    // TargetThreadWindows; Thread::ShouldResume() copies their resume state
+    // to the backing threads in m_thread_list_real.
+    LLDB_LOG(log, "resuming {0} threads.", m_thread_list_real.GetSize());
 
     bool failed = false;
-    for (uint32_t i = 0; i < m_thread_list.GetSize(); ++i) {
+    for (uint32_t i = 0; i < m_thread_list_real.GetSize(); ++i) {
       auto thread = std::static_pointer_cast<TargetThreadWindows>(
-          m_thread_list.GetThreadAtIndex(i));
+          m_thread_list_real.GetThreadAtIndex(i));
       Status result = thread->DoResume();
       if (result.Fail()) {
         failed = true;
@@ -349,7 +471,12 @@ void ProcessWindows::RefreshStateAfterStop() {
 
   StopInfoSP stop_info;
   m_thread_list.SetSelectedThreadByID(active_exception->GetThreadID());
-  ThreadSP stop_thread = m_thread_list.GetSelectedThread();
+  // Take the stop thread from m_thread_list_real: the register context below is
+  // cast to RegisterContextWindows, and with an operating system plugin
+  // m_thread_list holds that plugin's threads instead. They take their stop
+  // info from these backing threads.
+  ThreadSP stop_thread = m_thread_list_real.FindThreadByID(
+      active_exception->GetThreadID(), /*can_update=*/false);
   if (!stop_thread)
     return;
 
@@ -435,6 +562,10 @@ void ProcessWindows::RefreshStateAfterStop() {
                  "Breakpoint site {0} is not valid for this thread, "
                  "creating empty stop info.",
                  site->GetID());
+        // Still move the PC back onto the breakpoint address, or the thread
+        // resumes one byte into the instruction the trap replaced. On resume
+        // Thread::SetupToStepOverBreakpointIfNeeded() steps it over the site.
+        register_context->SetPC(pc);
       }
       stop_thread->SetStopInfo(stop_info);
       return;
@@ -722,6 +853,12 @@ ProcessWindows::OnDebugException(bool first_chance,
   switch (record.GetExceptionValue()) {
   case EXCEPTION_BREAKPOINT: {
     const lldb::addr_t bp_addr = record.GetExceptionAddress();
+    // Checked before m_pending_halt so that such an event does not consume
+    // the halt.
+    if (first_chance && m_session_data->m_initial_stop_received &&
+        HandleRemovedBreakpointTrap(record))
+      return ExceptionResult::MaskException;
+
     if (m_pending_halt) {
       m_pending_halt = false;
     } else if (m_expecting_loader_int3 && first_chance &&
@@ -760,6 +897,8 @@ ProcessWindows::OnDebugException(bool first_chance,
     break;
   }
   case EXCEPTION_SINGLE_STEP:
+    if (IsLateSingleStepTrap(record))
+      return ExceptionResult::MaskException;
     result = ExceptionResult::BreakInDebugger;
     DrainProcessStdout();
     SetPrivateState(eStateStopped);
@@ -931,8 +1070,8 @@ Status ProcessWindows::EnableWatchpoint(WatchpointSP wp_sp, bool notify) {
   info.read = wp_sp->WatchpointRead();
   info.write = wp_sp->WatchpointWrite() || wp_sp->WatchpointModify();
 
-  for (unsigned i = 0U; i < m_thread_list.GetSize(); i++) {
-    Thread *thread = m_thread_list.GetThreadAtIndex(i).get();
+  for (unsigned i = 0U; i < m_thread_list_real.GetSize(); i++) {
+    Thread *thread = m_thread_list_real.GetThreadAtIndex(i).get();
     auto *reg_ctx = static_cast<RegisterContextWindows *>(
         thread->GetRegisterContext().get());
     if (!reg_ctx->AddHardwareBreakpoint(info.slot_id, info.address, info.size,
@@ -944,8 +1083,8 @@ Status ProcessWindows::EnableWatchpoint(WatchpointSP wp_sp, bool notify) {
     }
   }
   if (error.Fail()) {
-    for (unsigned i = 0U; i < m_thread_list.GetSize(); i++) {
-      Thread *thread = m_thread_list.GetThreadAtIndex(i).get();
+    for (unsigned i = 0U; i < m_thread_list_real.GetSize(); i++) {
+      Thread *thread = m_thread_list_real.GetThreadAtIndex(i).get();
       auto *reg_ctx = static_cast<RegisterContextWindows *>(
           thread->GetRegisterContext().get());
       reg_ctx->RemoveHardwareBreakpoint(info.slot_id);
@@ -976,8 +1115,8 @@ Status ProcessWindows::DisableWatchpoint(WatchpointSP wp_sp, bool notify) {
     return error;
   }
 
-  for (unsigned i = 0U; i < m_thread_list.GetSize(); i++) {
-    Thread *thread = m_thread_list.GetThreadAtIndex(i).get();
+  for (unsigned i = 0U; i < m_thread_list_real.GetSize(); i++) {
+    Thread *thread = m_thread_list_real.GetThreadAtIndex(i).get();
     auto *reg_ctx = static_cast<RegisterContextWindows *>(
         thread->GetRegisterContext().get());
     if (!reg_ctx->RemoveHardwareBreakpoint(it->second.slot_id)) {

@@ -38,13 +38,21 @@ public:
   /// language runtimes can resolve thread-local storage.
   lldb_private::StructuredData::ObjectSP FetchThreadExtendedInfo() override;
 
-  Status DoResume();
+  /// Resume with the state the thread plans chose for this resume.
+  Status DoResume() { return DoResume(GetTemporaryResumeState()); }
+  /// eStateRunning and eStateStepping resume the thread, eStateStepping also
+  /// sets the single-step flag. Other states leave the thread suspended.
+  Status DoResume(lldb::StateType resume_state);
+
+  /// Whether the last DoResume() that resumed this thread single-stepped it.
+  bool IsSingleStepping() const { return m_single_stepping; }
 
   HostThread GetHostThread() const { return m_host_thread; }
 
 private:
   lldb::RegisterContextSP m_thread_reg_ctx_sp;
   HostThread m_host_thread;
+  bool m_single_stepping = false;
   std::string m_name;
 };
 } // namespace lldb_private

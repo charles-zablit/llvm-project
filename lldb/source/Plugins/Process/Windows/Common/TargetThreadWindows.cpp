@@ -160,8 +160,7 @@ bool TargetThreadWindows::CalculateStopInfo() {
   return true;
 }
 
-Status TargetThreadWindows::DoResume() {
-  StateType resume_state = GetTemporaryResumeState();
+Status TargetThreadWindows::DoResume(StateType resume_state) {
   StateType current_state = GetState();
   if (resume_state == current_state)
     return Status();
@@ -194,6 +193,7 @@ Status TargetThreadWindows::DoResume() {
   }
 
   if (resume_state == eStateStepping || resume_state == eStateRunning) {
+    m_single_stepping = resume_state == eStateStepping;
     DWORD previous_suspend_count = 0;
     HANDLE thread_handle = m_host_thread.GetNativeThread().GetSystemHandle();
     do {

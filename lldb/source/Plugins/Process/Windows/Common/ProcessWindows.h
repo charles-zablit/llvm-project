@@ -63,6 +63,11 @@ public:
   bool CanDebug(lldb::TargetSP target_sp,
                 bool plugin_specified_by_name) override;
   bool DestroyRequiresHalt() override { return false; }
+  // Process::Detach discards the thread plans and removes the breakpoint sites
+  // before it calls DoDetach. Detaching a running process would do that while
+  // the private state thread handles a stop (e.g. the single step of a
+  // ThreadPlanStepOverBreakpoint), so halt first, like ProcessGDBRemote.
+  bool DetachRequiresHalt() override { return true; }
   bool DoUpdateThreadList(ThreadList &old_thread_list,
                           ThreadList &new_thread_list) override;
   bool IsAlive() override;
@@ -123,6 +128,26 @@ protected:
                                MemoryRegionInfo &info) override;
 
 private:
+  /// Handle a trap whose breakpoint site was removed after the thread
+  /// executed it but before its EXCEPTION_BREAKPOINT event was delivered.
+  /// Moves the thread's PC back onto the restored instruction and returns
+  /// true if \p record is such a trap.
+  bool HandleRemovedBreakpointTrap(const ExceptionRecord &record);
+
+  /// Whether \p record is a single-step trap that belongs to an earlier
+  /// resume, on a thread the current resume did not step.
+  bool IsLateSingleStepTrap(const ExceptionRecord &record);
+
+  struct RemovedBreakpointTrap {
+    /// The trap opcode lldb had written at the address.
+    llvm::SmallVector<uint8_t, 4> opcode;
+    /// Threads whose late trap at the address was already undone.
+    llvm::SmallVector<lldb::tid_t, 2> rewound_threads;
+  };
+  /// Each software breakpoint site removed from memory, by load address. Used
+  /// by HandleRemovedBreakpointTrap.
+  std::map<lldb::addr_t, RemovedBreakpointTrap> m_removed_breakpoint_traps;
+
   struct WatchpointInfo {
     uint32_t slot_id;
     lldb::addr_t address;
