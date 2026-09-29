@@ -5,7 +5,6 @@ Test process attach.
 
 import os
 import lldb
-import shutil
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
 from lldbsuite.test import lldbutil
@@ -80,7 +79,6 @@ class ProcessAttachTestCase(TestBase):
         self.assertTrue(got_event, "Didn't receive any events after attaching")
         self.assertTrue(got_running, "Process didn't auto-continue")
 
-    @skipIfWindows  # This is flakey on Windows AND when it fails, it hangs: llvm.org/pr48806
     def test_attach_to_process_from_different_dir_by_id(self):
         """Test attach by process id"""
         newdir = self.getBuildArtifact("newdir")
@@ -88,7 +86,11 @@ class ProcessAttachTestCase(TestBase):
         testdir = self.getBuildDir()
         exe = os.path.join(newdir, "proc_attach")
         self.buildProgram("main.cpp", exe)
-        self.addTearDownHook(lambda: shutil.rmtree(newdir))
+        # Don't delete newdir at tearDown: setUp() wipes the build directory it
+        # lives in anyway, and on Windows lldb-server (whose working directory
+        # is newdir) and the killed inferior (which still maps proc_attach) can
+        # still be exiting when Kill() and DeleteTarget() return, so the delete
+        # fails with a sharing violation.
 
         # Spawn a new process
         popen = self.spawnSubprocess(exe)
@@ -118,7 +120,6 @@ class ProcessAttachTestCase(TestBase):
         process = target.GetProcess()
         self.assertTrue(process, PROCESS_IS_VALID)
 
-    @skipIfWindows  # This test is flaky on Windows
     @expectedFailureNetBSD
     def test_attach_to_process_by_id_correct_executable_offset(self):
         """

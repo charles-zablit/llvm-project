@@ -91,7 +91,6 @@ class LldbGdbServerTestCase(
     # Sometimes fails:
     # regex '^\$QC([0-9a-fA-F]+)#' failed to match against content '$E45#ae'
     # See https://github.com/llvm/llvm-project/issues/138085.
-    @skipIfWindows
     def test_first_launch_stop_reply_thread_matches_first_qC(self):
         self.build()
         procs = self.prep_debug_monitor_and_inferior()
@@ -115,12 +114,20 @@ class LldbGdbServerTestCase(
         context = self.expect_gdbremote_sequence()
         self.assertEqual(context.get("thread_id_QC"), context.get("thread_id_?"))
 
-    # This test is flaky on Windows. Sometimes returns 'Exception 0x80000003'.
-    @skipIf(oslist=["windows"], bugnumber="github.com/llvm/llvm-project/issues/138085")
     def test_attach_commandline_continue_app_exits(self):
         self.build()
         self.set_inferior_startup_attach()
-        procs = self.prep_debug_monitor_and_inferior()
+        # Keep the inferior alive until the stub has attached instead of for a
+        # fixed 3s. Under load, polling for the syncfile and starting the stub
+        # can take longer than that, the inferior exits first, and the attach
+        # fails (DebugActiveProcess returns ERROR_ACCESS_DENIED on Windows).
+        attached_file = lldbutil.append_to_process_working_directory(self, "attached")
+        procs = self.prep_debug_monitor_and_inferior(
+            inferior_args=["waitfile:" + attached_file], inferior_sleep_seconds=0
+        )
+        # The stub attaches before it connects to us, so the inferior is stopped
+        # now; it exits once it is resumed.
+        lldbutil.create_file_on_target(self, attached_file)
         self.test_sequence.add_log_lines(
             ["read packet: $vCont;c#a8", "send packet: $W00#00"], True
         )
@@ -318,7 +325,6 @@ class LldbGdbServerTestCase(
             self.assertEqual(int(context.get("thread_id"), 16), thread)
 
     # This test is flaky on Windows. Sometimes returns '$E37#af'.
-    @skipIf(oslist=["windows"], bugnumber="github.com/llvm/llvm-project/issues/138085")
     @skipIf(compiler="clang", compiler_version=["<", "11.0"])
     def test_Hg_switches_to_3_threads_launch(self):
         self.build()
@@ -359,7 +365,6 @@ class LldbGdbServerTestCase(
         self.Hg_fails_on_pid(0)
 
     @add_test_categories(["llgs"])
-    @skipIfWindows  # Sometimes returns '$E37'.
     def test_Hg_fails_on_minus_one_pid(self):
         self.build()
         self.set_inferior_startup_launch()
