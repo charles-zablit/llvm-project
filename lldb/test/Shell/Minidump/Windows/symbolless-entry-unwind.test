@@ -1,0 +1,18 @@
+Test unwinding from the first instruction of a function that no symbol covers
+and that is described only by the PE .pdata/.xdata unwind info.
+
+The unwind plan's rows are relative to the RUNTIME_FUNCTION's start. Without a
+symbol there is no function start to compute the frame's offset from, and the
+last row (the state after the prologue, CFA=rsp+0x60 here) used to be applied
+at the entry, where the CFA is rsp+8. The return address was then read from the
+wrong stack slot and the unwind stopped at frame 0.
+
+RUN: mkdir -p %t.dir
+RUN: yaml2obj %S/Inputs/symbolless-entry-unwind.exe.yaml -o %t.dir/symbolless-entry-unwind.exe
+RUN: yaml2obj %S/Inputs/symbolless-entry-unwind.dmp.yaml -o %t.dir/symbolless-entry-unwind.dmp
+RUN: %lldb -O "settings set target.exec-search-paths %t.dir" \
+RUN:   -c %t.dir/symbolless-entry-unwind.dmp -o "thread backtrace" -o exit \
+RUN:   | FileCheck %s
+
+CHECK:      frame #0: 0x0000000140001010 symbolless-entry-unwind.exe`
+CHECK-NEXT: frame #1: 0x0000000140001009 symbolless-entry-unwind.exe`

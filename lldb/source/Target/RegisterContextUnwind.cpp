@@ -75,6 +75,26 @@ static bool IsClangOutlinedFunction(const SymbolContext &sym_ctx) {
   return false;
 }
 
+/// Return the start of the function containing \p pc according to the object
+/// file's own unwind info (the .pdata RUNTIME_FUNCTION on PE/COFF x64), or an
+/// invalid Address if there is none.
+///
+/// PECallFrameInfo builds its UnwindPlan rows relative to this address, so it
+/// is the base the frame's offset has to use when no symbol covers \p pc. That
+/// is the usual state of static CRT code in a DWARF-debugged Windows image:
+/// the image has no COFF symbol table and libcmt has no DWARF, so a function
+/// like puts has no symbol at all.
+static Address GetFunctionStartFromObjectFileUnwindInfo(const Address &pc) {
+  ModuleSP module_sp = pc.GetModule();
+  if (!module_sp)
+    return Address();
+  CallFrameInfo *cfi = module_sp->GetUnwindTable().GetObjectFileUnwindInfo();
+  AddressRange range;
+  if (!cfi || !cfi->GetAddressRange(pc, range))
+    return Address();
+  return range.GetBaseAddress();
+}
+
 #define UNWIND_LOG_IMPL(LOG_FN, log, ...)                                      \
   LOG_FN(log, "{0}th{1}/fr{2} {3}",                                            \
          llvm::indent(std::min(m_frame_number, 100U)), m_thread.GetIndexID(),  \
@@ -222,6 +242,19 @@ void RegisterContextUnwind::InitializeZerothFrame() {
       m_current_offset =
           m_current_pc.GetFileAddress() - m_start_pc.GetFileAddress();
     }
+    m_current_offset_backed_up_one = m_current_offset;
+  } else if (Address start =
+                 GetFunctionStartFromObjectFileUnwindInfo(m_current_pc);
+             start.IsValid()) {
+    // Without an offset, GetRowForFunctionOffset() returns the last row, which
+    // is only right once the prologue has run. Frame 0 is often the first
+    // instruction of a callee we just stepped into, where the last row puts
+    // the CFA a whole frame too high (rsp+0xd0 instead of rsp+8 for the static
+    // CRT's puts). The callee then compares as older than its caller, and a
+    // step-over stops inside it instead of stepping back out.
+    m_start_pc = start;
+    m_current_offset =
+        m_current_pc.GetFileAddress() - m_start_pc.GetFileAddress();
     m_current_offset_backed_up_one = m_current_offset;
   } else {
     m_start_pc = m_current_pc;
@@ -925,11 +958,12 @@ RegisterContextUnwind::GetFullUnwindPlanForFrame() {
       return arch_default_unwind_plan_sp;
 
     // Even with -fomit-frame-pointer, we can try eh_frame to get back on
-    // track.
+    // track. Look the FDE up by pc, but make its rows relative to m_start_pc,
+    // which is what m_current_offset is relative to.
     if (DWARFCallFrameInfo *eh_frame =
             pc_module_sp->GetUnwindTable().GetEHFrameInfo()) {
-      if (std::unique_ptr<UnwindPlan> plan_up =
-              eh_frame->GetUnwindPlan(m_current_pc))
+      if (std::unique_ptr<UnwindPlan> plan_up = eh_frame->GetUnwindPlan(
+              {AddressRange(m_current_pc, 1)}, m_start_pc))
         return plan_up;
     }
 
