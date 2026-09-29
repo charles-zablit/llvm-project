@@ -26,7 +26,6 @@ class EventAPITestCase(TestBase):
     @expectedFailureAll(
         oslist=["linux"], bugnumber="llvm.org/pr23730 Flaky, fails ~1/10 cases"
     )
-    @skipIfWindows  # This is flakey on Windows AND when it fails, it hangs: llvm.org/pr38373
     @skipIfNetBSD
     def test_listen_for_and_print_event(self):
         """Exercise SBEvent API."""
@@ -115,7 +114,6 @@ class EventAPITestCase(TestBase):
         # Shouldn't we be testing against some kind of expectation here?
 
     @expectedFlakeyLinux("llvm.org/pr23730")  # Flaky, fails ~1/100 cases
-    @skipIfWindows  # This is flakey on Windows AND when it fails, it hangs: llvm.org/pr38373
     @skipIfNetBSD
     def test_wait_for_event(self):
         """Exercise SBListener.WaitForEvent() API."""
@@ -197,7 +195,6 @@ class EventAPITestCase(TestBase):
     @expectedFailureAll(
         oslist=["linux"], bugnumber="llvm.org/pr23617 Flaky, fails ~1/10 cases"
     )
-    @skipIfWindows  # This is flakey on Windows AND when it fails, it hangs: llvm.org/pr38373
     @expectedFailureNetBSD
     def test_add_listener_to_broadcaster(self):
         """Exercise some SBBroadcaster APIs."""
@@ -373,7 +370,6 @@ class EventAPITestCase(TestBase):
         return state, restart
 
     @expectedFlakeyLinux("llvm.org/pr23730")  # Flaky, fails ~1/100 cases
-    @skipIfWindows  # This is flakey on Windows AND when it fails, it hangs: llvm.org/pr38373
     @skipIfNetBSD
     def test_shadow_listener(self):
         self.build()
