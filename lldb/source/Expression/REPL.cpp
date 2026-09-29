@@ -370,6 +370,7 @@ void REPL::IOHandlerInputComplete(IOHandler &io_handler, std::string &code) {
       } else if (process_sp && process_sp->IsAlive()) {
         bool add_to_code = true;
         bool handled = false;
+        bool drop_into_command_interpreter = false;
         if (result_valobj_sp) {
           lldb::Format format = m_format_options.GetFormat();
 
@@ -458,13 +459,7 @@ void REPL::IOHandlerInputComplete(IOHandler &io_handler, std::string &code) {
             locked_error_stream.Printf(
                 "Enter LLDB commands to investigate (type help "
                 "for assistance.)\n");
-            {
-              lldb::IOHandlerSP io_handler_sp(ci.GetIOHandler());
-              if (io_handler_sp) {
-                io_handler_sp->SetIsDone(false);
-                debugger.RunIOHandlerAsync(ci.GetIOHandler());
-              }
-            }
+            drop_into_command_interpreter = true;
             break;
 
           case lldb::eExpressionTimedOut:
@@ -487,6 +482,17 @@ void REPL::IOHandlerInputComplete(IOHandler &io_handler, std::string &code) {
             locked_error_stream.Printf(
                 "error: expression thread vanished -- %s\n", error.AsCString());
             break;
+          }
+        }
+
+        // Push the handler only after the error stream is unlocked: the event
+        // thread's PrintAsync takes the IOHandler stack lock, then the stream
+        // lock, the reverse of PushIOHandler under locked_error_stream.
+        if (drop_into_command_interpreter) {
+          lldb::IOHandlerSP io_handler_sp(ci.GetIOHandler());
+          if (io_handler_sp) {
+            io_handler_sp->SetIsDone(false);
+            debugger.RunIOHandlerAsync(ci.GetIOHandler());
           }
         }
 
