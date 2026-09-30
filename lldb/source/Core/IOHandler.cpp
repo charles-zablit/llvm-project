@@ -667,12 +667,16 @@ void IOHandlerEditline::PrintAsync(const char *s, size_t len, bool is_stdout) {
 #endif
   {
 #ifdef _WIN32
-    const char *prompt = GetPrompt();
+    // Redraw the prompt only where GetLine printed one and a console can
+    // erase it. Otherwise the prompt lands between two chunks of the output.
+    const char *prompt = nullptr;
+    CONSOLE_SCREEN_BUFFER_INFO screen_buffer_info;
+    HANDLE console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (GetIsInteractive() &&
+        GetConsoleScreenBufferInfo(console_handle, &screen_buffer_info))
+      prompt = GetPrompt();
     if (prompt) {
       // Back up over previous prompt using Windows API
-      CONSOLE_SCREEN_BUFFER_INFO screen_buffer_info;
-      HANDLE console_handle = GetStdHandle(STD_OUTPUT_HANDLE);
-      GetConsoleScreenBufferInfo(console_handle, &screen_buffer_info);
       COORD coord = screen_buffer_info.dwCursorPosition;
       coord.X -= strlen(prompt);
       if (coord.X < 0)
