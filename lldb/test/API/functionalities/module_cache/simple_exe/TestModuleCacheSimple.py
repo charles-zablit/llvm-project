@@ -67,7 +67,9 @@ class ModuleCacheTestcaseSimple(TestBase):
         # Now remove the executable and sleep for a few seconds to make sure we
         # get a different creation and modification time for the file since some
         # OSs store the modification time in seconds since Jan 1, 1970.
-        os.remove(exe)
+        # lldb still maps the executable, and Windows before POSIX delete
+        # semantics refuses to delete a mapped file. It does allow moving it.
+        os.replace(exe, exe + ".old")
         self.assertFalse(
             os.path.exists(exe), "make sure we were able to remove the executable"
         )
