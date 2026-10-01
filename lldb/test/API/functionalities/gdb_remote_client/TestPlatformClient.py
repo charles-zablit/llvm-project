@@ -131,7 +131,9 @@ class TestPlatformClient(GDBRemoteTestBase):
         retrieval should fail."""
 
         self.server.responder = TestPlatformClient.TimeoutResponder()
-        self.runCmd("settings set plugin.process.gdb-remote.packet-timeout 3")
+        # After a timeout, the client keeps reading for three more timeouts
+        # while it resyncs, so the reply has to come later than that.
+        self.runCmd("settings set plugin.process.gdb-remote.packet-timeout 1")
         plat = lldb.SBPlatform("remote-linux")
         try:
             self.assertSuccess(
