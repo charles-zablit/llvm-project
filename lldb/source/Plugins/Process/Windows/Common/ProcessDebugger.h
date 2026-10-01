@@ -84,6 +84,11 @@ protected:
 
   Status DestroyProcess(lldb::StateType process_state);
 
+  /// End the debug session whatever the process state, terminating the
+  /// inferior if it still runs, and wait for the debugger thread to stop
+  /// calling back into the delegate.
+  void EndDebugSession();
+
   Status HaltProcess(bool &caused_stop);
 
   Status GetMemoryRegionInfo(lldb::addr_t load_addr,

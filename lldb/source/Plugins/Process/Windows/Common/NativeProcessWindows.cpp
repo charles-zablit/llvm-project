@@ -528,14 +528,18 @@ void NativeProcessWindows::OnExitProcess(uint32_t exit_code) {
   // read thread can exit. Tear it down before the debuggee is destroyed.
   StopStdioForwarding();
 
+  // A process that exits before its initial stop failed to launch or attach.
+  // ProcessDebugger reports that as an error, and the server never got the
+  // process, so don't report the exit to it.
+  bool started = m_session_data && m_session_data->m_initial_stop_received;
   ProcessDebugger::OnExitProcess(exit_code);
 
   // No signal involved.  It is just an exit event.
   WaitStatus wait_status(WaitStatus::Exit, exit_code);
-  SetExitStatus(wait_status, true);
+  SetExitStatus(wait_status, started);
 
   // Notify the native delegate.
-  SetState(eStateExited, true);
+  SetState(eStateExited, started);
 }
 
 void NativeProcessWindows::OnDebuggerConnected(lldb::addr_t image_base) {
@@ -960,7 +964,12 @@ NativeProcessWindows::Manager::Attach(
   return std::move(process_up);
 }
 
-NativeProcessWindows::~NativeProcessWindows() { StopStdioForwarding(); }
+NativeProcessWindows::~NativeProcessWindows() {
+  // The server destroys the process as soon as the debugger thread has
+  // reported its exit, while that thread is still in OnExitProcess.
+  EndDebugSession();
+  StopStdioForwarding();
+}
 
 void NativeProcessWindows::StartStdioForwarding() {
   if (!m_pty || !m_pty->IsConnected())
