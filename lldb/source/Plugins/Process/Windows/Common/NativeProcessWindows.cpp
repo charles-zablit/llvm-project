@@ -951,6 +951,10 @@ void NativeProcessWindows::StopStdioForwarding() {
   if (!m_stdio_communication.HasConnection())
     return;
 
+  // The inferior has exited or is held at a debug event, so all it wrote to the
+  // pipe is in there. A ConPTY's last frame is read below, up to its EOF.
+  m_stdio_communication.SynchronizeWithReadThread();
+
   if (m_pty)
     m_pty->Close();
 
