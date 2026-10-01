@@ -586,6 +586,9 @@ void NativeProcessWindows::ReportDeferredStop() {
   m_deferred_stop = false;
   if (GetThreadByID(m_deferred_stop_tid))
     SetCurrentThreadID(m_deferred_stop_tid);
+  // Send what the inferior wrote before it stopped ahead of the stop reply.
+  // Its threads are held, so a pipe already has all of it.
+  m_stdio_communication.SynchronizeWithReadThread();
   SynchronouslyNotifyProcessStateChanged(eStateStopped);
 }
 
