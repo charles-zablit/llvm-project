@@ -109,8 +109,8 @@ static std::optional<uint64_t> ExtentFromTypeName(llvm::StringRef name) {
 /// `_Mydata` and derives `_Mysize` from the `_Extent` template argument, so the
 /// count has to be recovered from the type itself. Which spelling survives into
 /// the debug info varies, hence the three attempts: NativePDB rebuilds no
-/// template arguments, and an STL that names the extent directly rather than
-/// re-declaring it as a static member leaves nothing but the type name.
+/// template arguments, and clang only emits the value of the static `_Mysize`
+/// when the translation unit uses it, which leaves nothing but the type name.
 static std::optional<size_t> GetStaticExtent(CompilerType span_type) {
   // A dynamic extent means the size is a member instead, so reject the
   // sentinel rather than reporting SIZE_MAX children.
@@ -128,7 +128,8 @@ static std::optional<size_t> GetStaticExtent(CompilerType span_type) {
     if (Scalar extent = field.GetConstantValue(); extent.IsValid())
       return if_static(extent.ULongLong(0));
 
-  if (auto extent = ExtentFromTypeName(span_type.GetTypeName().GetStringRef()))
+  if (auto extent = ExtentFromTypeName(
+          span_type.GetCanonicalType().GetTypeName().GetStringRef()))
     return if_static(*extent);
 
   return std::nullopt;
