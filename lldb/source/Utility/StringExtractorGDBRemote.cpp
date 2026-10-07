@@ -120,6 +120,8 @@ StringExtractorGDBRemote::GetServerPacketType() const {
         return eServerPacketType_QSetSTDOUT;
       if (PACKET_STARTS_WITH("QSetSTDERR:"))
         return eServerPacketType_QSetSTDERR;
+      if (PACKET_STARTS_WITH("QSetSTDINForwardingPipe:"))
+        return eServerPacketType_QSetSTDINForwardingPipe;
       if (PACKET_STARTS_WITH("QSetSTDIOWindowSize:"))
         return eServerPacketType_QSetSTDIOWindowSize;
       if (PACKET_STARTS_WITH("QSetWorkingDir:"))

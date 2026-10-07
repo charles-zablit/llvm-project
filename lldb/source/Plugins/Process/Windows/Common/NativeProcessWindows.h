@@ -10,6 +10,7 @@
 #define liblldb_NativeProcessWindows_h_
 
 #include "lldb/Core/ThreadedCommunication.h"
+#include "lldb/Host/HostThread.h"
 #include "lldb/Host/common/NativeProcessProtocol.h"
 #include "lldb/lldb-forward.h"
 
@@ -119,8 +120,9 @@ public:
         bool(flags & (Extension::libraries | Extension::libraries_svr4)));
   }
 
-  /// Forward bytes from the gdb-remote `I` packet into the inferior's
-  /// ConPTY-backed stdin via `m_stdio_communication.Write` →
+  /// Forward bytes from the gdb-remote `I` packet, or from the client's stdin
+  /// forwarding pipe, into the inferior's ConPTY-backed stdin via
+  /// `m_stdio_communication.Write` →
   /// `ConnectionConPTY::Write` → `WriteFile` on the parent-side STDIN
   /// HANDLE. Returns the number of bytes written (0 if the PTY is
   /// disconnected or write fails).
@@ -205,8 +207,30 @@ private:
   /// Wire up m_stdio_communication on m_pty's STDOUT HANDLE.
   void StartStdioForwarding();
 
-  /// Tear down the read thread and disconnect m_stdio_communication.
+  /// Tear down the read thread and disconnect m_stdio_communication, after
+  /// stopping m_stdin_thread.
   void StopStdioForwarding();
+
+  /// Pipe the client writes the inferior's stdin into, opened when it sent
+  /// QSetSTDINForwardingPipe.
+  std::shared_ptr<void> m_stdin_pipe;
+
+  /// Signalled to make m_stdin_thread return.
+  HANDLE m_stdin_stop_event = nullptr;
+
+  /// Forwards m_stdin_pipe to the inferior's stdin, see ForwardSTDIN.
+  HostThread m_stdin_thread;
+
+  /// Start m_stdin_thread on \p pipe, if the client sent one.
+  void StartSTDINForwarding(std::shared_ptr<void> pipe);
+
+  /// Body of m_stdin_thread: WriteStdin whatever arrives on m_stdin_pipe until
+  /// the client closes it or m_stdin_stop_event is signalled.
+  ///
+  /// This is not a ThreadedCommunication, because its read thread only checks
+  /// for a stop request when its read times out, after up to 5 seconds, and
+  /// OnExitProcess has to wait for it to stop.
+  void ForwardSTDIN();
 };
 
 //------------------------------------------------------------------

@@ -149,6 +149,11 @@ void GDBRemoteCommunicationServerLLGS::RegisterPacketHandlers() {
   RegisterMemberFunctionHandler(
       StringExtractorGDBRemote::eServerPacketType_QSetDisableASLR,
       &GDBRemoteCommunicationServerLLGS::Handle_QSetDisableASLR);
+#if defined(_WIN32)
+  RegisterMemberFunctionHandler(
+      StringExtractorGDBRemote::eServerPacketType_QSetSTDINForwardingPipe,
+      &GDBRemoteCommunicationServerLLGS::Handle_QSetSTDINForwardingPipe);
+#endif
   RegisterMemberFunctionHandler(
       StringExtractorGDBRemote::eServerPacketType_QSetWorkingDir,
       &GDBRemoteCommunicationServerLLGS::Handle_QSetWorkingDir);
@@ -2613,6 +2618,22 @@ GDBRemoteCommunicationServerLLGS::Handle_I(StringExtractorGDBRemote &packet) {
 
   return SendOKResponse();
 }
+
+#if defined(_WIN32)
+GDBRemoteCommunication::PacketResult
+GDBRemoteCommunicationServerLLGS::Handle_QSetSTDINForwardingPipe(
+    StringExtractorGDBRemote &packet) {
+  packet.SetFilePos(::strlen("QSetSTDINForwardingPipe:"));
+  std::string path;
+  packet.GetHexByteString(path);
+  if (path.empty())
+    return SendIllFormedResponse(packet,
+                                 "QSetSTDINForwardingPipe: missing pipe path");
+  if (llvm::Error error = m_process_launch_info.OpenSTDINForwardingPipe(path))
+    return SendErrorResponse(std::move(error));
+  return SendOKResponse();
+}
+#endif
 
 GDBRemoteCommunication::PacketResult
 GDBRemoteCommunicationServerLLGS::Handle_interrupt(

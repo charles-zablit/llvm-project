@@ -222,6 +222,10 @@ protected:
 
   PacketResult Handle_I(StringExtractorGDBRemote &packet);
 
+#if defined(_WIN32)
+  PacketResult Handle_QSetSTDINForwardingPipe(StringExtractorGDBRemote &packet);
+#endif
+
   PacketResult Handle_interrupt(StringExtractorGDBRemote &packet);
 
   // Handles $m and $x packets.

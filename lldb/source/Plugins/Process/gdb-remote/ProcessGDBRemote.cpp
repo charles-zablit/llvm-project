@@ -22,7 +22,10 @@
 #include <sys/sysctl.h>
 #endif
 #ifdef _WIN32
+#include "lldb/Host/windows/ConnectionGenericFileWindows.h"
 #include "lldb/Host/windows/windows.h"
+#include "llvm/Support/ConvertUTF.h"
+#include "llvm/Support/Process.h"
 #endif
 #include <ctime>
 #include <sys/types.h>
@@ -221,6 +224,56 @@ static std::pair<uint16_t, uint16_t> GetClientTerminalSize() {
 #endif
   return {0, 0};
 }
+
+#ifdef _WIN32
+/// Create a pipe for the inferior's stdin and ask lldb-server to forward what
+/// arrives on it to the inferior.
+///
+/// There is no pseudo-terminal on Windows that lldb could share with
+/// lldb-server, so stdin otherwise travels in `I` packets, and lldb has to
+/// interrupt the running inferior to send each one: a DebugBreakProcess thread
+/// and a stop and resume for every keystroke. lldb can write into the pipe
+/// while the inferior runs.
+///
+/// Returns nullptr if lldb-server cannot use the pipe, e.g. because it runs on
+/// another machine or does not know QSetSTDINForwardingPipe. Stdin then goes
+/// through `I` packets.
+static std::unique_ptr<Connection>
+CreateSTDINForwardingPipe(GDBRemoteCommunicationClient &gdb_comm) {
+  Log *log = GetLog(GDBRLog::Process);
+  static std::atomic<uint32_t> g_pipe_serial(0);
+  const std::string name =
+      llvm::formatv("\\\\.\\pipe\\lldb-stdin-{0}-{1}-{2:x-}",
+                    ::GetCurrentProcessId(), g_pipe_serial++,
+                    llvm::sys::Process::GetRandomNumber())
+          .str();
+  std::wstring wname;
+  if (!llvm::ConvertUTF8toWide(name, wname))
+    return nullptr;
+  // A single instance: whoever opens it first is its only reader. If that is
+  // not lldb-server, lldb-server fails to open it and nothing gets written.
+  HANDLE pipe = ::CreateNamedPipeW(
+      wname.c_str(),
+      PIPE_ACCESS_OUTBOUND | FILE_FLAG_FIRST_PIPE_INSTANCE |
+          FILE_FLAG_OVERLAPPED,
+      PIPE_TYPE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+      /*nMaxInstances=*/1, /*nOutBufferSize=*/4096, /*nInBufferSize=*/0,
+      /*nDefaultTimeOut=*/0, /*lpSecurityAttributes=*/nullptr);
+  if (pipe == INVALID_HANDLE_VALUE) {
+    LLDB_LOG(log, "failed to create the stdin forwarding pipe: {0}",
+             Status(::GetLastError(), eErrorTypeWin32));
+    return nullptr;
+  }
+  auto connection =
+      std::make_unique<ConnectionGenericFile>(pipe, /*owns_file=*/true);
+  if (llvm::Error error = gdb_comm.SetSTDINForwardingPipe(name)) {
+    LLDB_LOG_ERROR(log, std::move(error),
+                   "forwarding stdin in `I` packets instead of a pipe: {0}");
+    return nullptr;
+  }
+  return connection;
+}
+#endif
 
 } // namespace
 
@@ -873,6 +926,12 @@ Status ProcessGDBRemote::DoLaunch(lldb_private::Module *exe_module,
       m_gdb_comm.SetSTDIOWindowSize(terminal_cols, terminal_rows);
     }
 
+#ifdef _WIN32
+    std::unique_ptr<Connection> stdin_pipe;
+    if (m_stdin_forward && platform_sp && platform_sp->IsHost())
+      stdin_pipe = CreateSTDINForwardingPipe(m_gdb_comm);
+#endif
+
     m_gdb_comm.SetDisableASLR(launch_flags & eLaunchFlagDisableASLR);
     m_gdb_comm.SetDetachOnError(launch_flags & eLaunchFlagDetachOnError);
 
@@ -949,7 +1008,11 @@ Status ProcessGDBRemote::DoLaunch(lldb_private::Module *exe_module,
         }
 #ifdef _WIN32
         else if (m_stdin_forward) {
-          // No client-side PTY FD on Windows.
+          // No client-side PTY FD on Windows. PutSTDIN writes into
+          // m_stdio_communication when it is connected, so connect it to the
+          // pipe lldb-server forwards stdin from, if it took one.
+          if (stdin_pipe)
+            m_stdio_communication.SetConnection(std::move(stdin_pipe));
           std::lock_guard<std::mutex> guard(m_process_input_reader_mutex);
           if (!m_process_input_reader)
             m_process_input_reader =

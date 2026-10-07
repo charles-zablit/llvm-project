@@ -75,6 +75,20 @@ public:
   // Redirect stdin/stdout/stderr to anonymous pipes instead of a ConPTY.
   // Used when terminal emulation is not needed (e.g. lldb-dap internalConsole).
   llvm::Error SetUpPipeRedirection();
+
+  /// Open the named pipe at \p path, which the debugger writes the inferior's
+  /// stdin into, so that the process plugin can forward it to the inferior.
+  ///
+  /// This replaces the gdb-remote `I` packet when lldb-server runs on the same
+  /// machine as lldb. lldb can write into the pipe while the inferior runs,
+  /// whereas it has to interrupt the inferior to send a packet.
+  llvm::Error OpenSTDINForwardingPipe(llvm::StringRef path);
+
+  /// Hand over the pipe opened by OpenSTDINForwardingPipe, if any. Releasing
+  /// the last reference closes it.
+  std::shared_ptr<void> TakeSTDINForwardingPipe() {
+    return std::move(m_stdin_forwarding_pipe);
+  }
 #endif
 
   bool HasPTY() const { return m_pty != nullptr; }
@@ -201,6 +215,10 @@ protected:
   std::vector<FileActionImpl>
       m_file_actions; // File actions for any other files
   std::shared_ptr<PTY> m_pty;
+#ifdef _WIN32
+  /// The pipe HANDLE opened by OpenSTDINForwardingPipe.
+  std::shared_ptr<void> m_stdin_forwarding_pipe;
+#endif
   uint32_t m_resume_count = 0; // How many times do we resume after launching
   Host::MonitorChildProcessCallback m_monitor_callback;
   std::string m_event_data; // A string passed to the plugin launch, having no

@@ -1208,6 +1208,37 @@ These packets must be sent  _prior_ to sending a "A" packet.
 a target after making a connection to a GDB server that isn't already connected to
 an inferior process.
 
+## QSetSTDINForwardingPipe:\<ascii-hex-path\>
+
+Ask the server to forward the data the client writes into a named pipe to the
+stdin of the inferior launched by the next launch args (`A`) packet.
+
+The client creates the pipe and sends its path prior to the `A` packet:
+```
+send packet: QSetSTDINForwardingPipe:<ascii-hex-path>
+read packet: OK
+```
+The server opens the pipe before replying. Once the inferior runs, it forwards
+whatever arrives on the pipe to the inferior's stdin, the same destination as
+the `I` packet, whether the inferior is running or stopped. It stops when the
+client closes its end of the pipe or the inferior exits.
+
+The `I` packet cannot be sent while the inferior is running, so the client has
+to interrupt the inferior for each one. With a pipe, the client writes stdin
+directly instead. On POSIX hosts, a local client shares a pseudo-terminal with
+the server for the same purpose. lldb-server only supports this packet on
+Windows, where it opens `<ascii-hex-path>` as a named pipe
+(`\\.\pipe\<name>`), so the client and server have to run on the same machine.
+
+The response is either:
+* `OK`: the server opened the pipe.
+* `ENN`: the server could not open the pipe. The client should keep sending
+  `I` packets.
+* Empty: packet not supported. The client should keep sending `I` packets.
+
+**Priority To Implement:** Low. Only useful when the client and server run on
+the same machine and cannot share a pseudo-terminal.
+
 ## QSetSTDIOWindowSize:cols=\<N\>;rows=\<N\>
 
 Set the terminal window size for the inferior's stdio pseudo-terminal prior to

@@ -23,6 +23,7 @@
 #ifdef _WIN32
 #include "lldb/Host/windows/PseudoConsole.h"
 #include "lldb/Host/windows/WindowsFileAction.h"
+#include "lldb/Host/windows/windows.h"
 #else
 #include <climits>
 #endif
@@ -272,6 +273,20 @@ llvm::Error ProcessLaunchInfo::SetUpPipeRedirection() {
   if (!m_pty)
     m_pty = std::make_shared<PTY>();
   return m_pty->OpenAnonymousPipes();
+}
+
+llvm::Error ProcessLaunchInfo::OpenSTDINForwardingPipe(llvm::StringRef path) {
+  std::wstring wpath;
+  if (!llvm::ConvertUTF8toWide(path, wpath))
+    return llvm::createStringError("invalid pipe path '" + path + "'");
+  // Overlapped, so that the reader can cancel a pending read when it stops.
+  HANDLE pipe = ::CreateFileW(wpath.c_str(), GENERIC_READ, 0, nullptr,
+                              OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
+  if (pipe == INVALID_HANDLE_VALUE)
+    return llvm::errorCodeToError(
+        std::error_code(::GetLastError(), std::system_category()));
+  m_stdin_forwarding_pipe = std::shared_ptr<void>(pipe, ::CloseHandle);
+  return llvm::Error::success();
 }
 #endif
 

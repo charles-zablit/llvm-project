@@ -2103,6 +2103,22 @@ int GDBRemoteCommunicationClient::SetSTDIOWindowSize(uint16_t cols,
   return error ? error : -1;
 }
 
+llvm::Error
+GDBRemoteCommunicationClient::SetSTDINForwardingPipe(llvm::StringRef path) {
+  StreamString packet;
+  packet.PutCString("QSetSTDINForwardingPipe:");
+  packet.PutStringAsRawHex8(path);
+  StringExtractorGDBRemote response;
+  if (SendPacketAndWaitForResponse(packet.GetString(), response) !=
+      PacketResult::Success)
+    return llvm::createStringError("failed to send QSetSTDINForwardingPipe");
+  if (response.IsOKResponse())
+    return llvm::Error::success();
+  if (response.IsErrorResponse())
+    return response.GetStatus().takeError();
+  return llvm::createStringError("QSetSTDINForwardingPipe is not supported");
+}
+
 bool GDBRemoteCommunicationClient::GetWorkingDir(FileSpec &working_dir) {
   StringExtractorGDBRemote response;
   if (SendPacketAndWaitForResponse("qGetWorkingDir", response) ==

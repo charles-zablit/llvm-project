@@ -156,6 +156,14 @@ public:
   /// Send the dimensions of the user's stdio terminal window to the server.
   int SetSTDIOWindowSize(uint16_t cols, uint16_t rows);
 
+  /// Ask the server to forward what the client writes into the named pipe at
+  /// \a path to the stdin of the process launched by the next 'A' packet.
+  ///
+  /// \return
+  ///     An error if the server does not support this or could not open the
+  ///     pipe, in which case stdin has to go through `I` packets.
+  llvm::Error SetSTDINForwardingPipe(llvm::StringRef path);
+
   /// Sets the disable ASLR flag to \a enable for a process that will
   /// be launched with the 'A' packet.
   ///

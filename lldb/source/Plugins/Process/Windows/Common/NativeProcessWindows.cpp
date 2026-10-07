@@ -19,6 +19,7 @@
 #include "lldb/Host/HostProcess.h"
 #include "lldb/Host/ProcessLaunchInfo.h"
 #include "lldb/Host/PseudoTerminal.h"
+#include "lldb/Host/ThreadLauncher.h"
 #include "lldb/Host/windows/AutoHandle.h"
 #include "lldb/Host/windows/ConnectionConPTYWindows.h"
 #include "lldb/Host/windows/HostThreadWindows.h"
@@ -29,6 +30,7 @@
 #include "lldb/Target/UnixSignals.h"
 #include "lldb/Utility/State.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Errc.h"
@@ -72,6 +74,7 @@ NativeProcessWindows::NativeProcessWindows(ProcessLaunchInfo &launch_info,
 
   m_pty = launch_info.TakePTY();
   StartStdioForwarding();
+  StartSTDINForwarding(launch_info.TakeSTDINForwardingPipe());
 }
 
 NativeProcessWindows::NativeProcessWindows(lldb::pid_t pid, int terminal_fd,
@@ -956,6 +959,17 @@ void NativeProcessWindows::StartStdioForwarding() {
 }
 
 void NativeProcessWindows::StopStdioForwarding() {
+  // Stop forwarding stdin first, so that nothing writes to the PTY while it
+  // closes.
+  if (m_stdin_thread.IsJoinable()) {
+    ::SetEvent(m_stdin_stop_event);
+    m_stdin_thread.Join(nullptr);
+  }
+  if (m_stdin_stop_event) {
+    ::CloseHandle(m_stdin_stop_event);
+    m_stdin_stop_event = nullptr;
+  }
+
   if (!m_stdio_communication.HasConnection())
     return;
 
@@ -977,6 +991,74 @@ void NativeProcessWindows::STDIOReadThreadBytesReceived(void *baton,
     return;
   self->m_delegate.NewProcessOutput(
       self, llvm::StringRef(static_cast<const char *>(src), src_len));
+}
+
+void NativeProcessWindows::StartSTDINForwarding(std::shared_ptr<void> pipe) {
+  if (!pipe)
+    return;
+
+  m_stdin_stop_event = ::CreateEventW(nullptr, /*bManualReset=*/TRUE,
+                                      /*bInitialState=*/FALSE, nullptr);
+  if (!m_stdin_stop_event)
+    return;
+
+  m_stdin_pipe = std::move(pipe);
+  llvm::Expected<HostThread> thread = ThreadLauncher::LaunchThread(
+      "<lldb.process.windows.stdin>", [this]() -> lldb::thread_result_t {
+        ForwardSTDIN();
+        return {};
+      });
+  if (!thread) {
+    LLDB_LOG_ERROR(GetLog(WindowsLog::Process), thread.takeError(),
+                   "failed to start forwarding stdin: {0}");
+    m_stdin_pipe.reset();
+    return;
+  }
+  m_stdin_thread = *thread;
+}
+
+void NativeProcessWindows::ForwardSTDIN() {
+  // Close the pipe on the way out rather than leave the client's writes to fill
+  // a buffer nobody reads.
+  llvm::scope_exit close_pipe([&] { m_stdin_pipe.reset(); });
+
+  HANDLE pipe = m_stdin_pipe.get();
+  AutoHandle read_done(::CreateEventW(nullptr, /*bManualReset=*/TRUE,
+                                      /*bInitialState=*/FALSE, nullptr),
+                       nullptr);
+  if (!read_done.IsValid())
+    return;
+  HANDLE events[] = {read_done.get(), m_stdin_stop_event};
+  char buffer[1024];
+  while (true) {
+    OVERLAPPED overlapped = {};
+    overlapped.hEvent = read_done.get();
+    if (!::ReadFile(pipe, buffer, sizeof(buffer), nullptr, &overlapped) &&
+        ::GetLastError() != ERROR_IO_PENDING)
+      break;
+
+    DWORD bytes_read = 0;
+    if (::WaitForMultipleObjects(std::size(events), events,
+                                 /*bWaitAll=*/FALSE,
+                                 INFINITE) != WAIT_OBJECT_0) {
+      // The pending read still refers to `overlapped` and `buffer`.
+      ::CancelIoEx(pipe, &overlapped);
+      ::GetOverlappedResult(pipe, &overlapped, &bytes_read, /*bWait=*/TRUE);
+      break;
+    }
+    // Zero bytes or ERROR_BROKEN_PIPE: the client closed its end.
+    if (!::GetOverlappedResult(pipe, &overlapped, &bytes_read,
+                               /*bWait=*/FALSE) ||
+        bytes_read == 0)
+      break;
+
+    Status error;
+    if (WriteStdin(buffer, bytes_read, error) != bytes_read) {
+      LLDB_LOG(GetLog(WindowsLog::Process),
+               "failed to forward stdin to the inferior: {0}", error);
+      break;
+    }
+  }
 }
 
 size_t NativeProcessWindows::WriteStdin(const void *buf, size_t len,
