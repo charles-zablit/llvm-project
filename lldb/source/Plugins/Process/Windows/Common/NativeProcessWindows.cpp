@@ -26,6 +26,7 @@
 #include "lldb/Host/windows/PseudoConsole.h"
 #include "lldb/Target/MemoryRegionInfo.h"
 #include "lldb/Target/Process.h"
+#include "lldb/Target/UnixSignals.h"
 #include "lldb/Utility/State.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
@@ -672,7 +673,14 @@ NativeProcessWindows::HandleBreakpointException(const ExceptionRecord &record) {
     m_pending_halt = false;
     ThreadStopInfo signal_info;
     signal_info.reason = StopReason::eStopReasonSignal;
-    signal_info.signo = 19; // SIGSTOP on POSIX
+    // Use the SIGSTOP number of the signal table the client uses for Windows
+    // targets. After interrupting the inferior to send a packet,
+    // GDBRemoteClientBase::ShouldStop only resumes it silently if the stop
+    // carries SIGSTOP or SIGINT. Linux's SIGSTOP (19) is SIGCONT in that
+    // table, which turns every such interrupt into a public "stopped and
+    // restarted" event.
+    signal_info.signo =
+        UnixSignals::CreateForHost()->GetSignalNumberFromName("SIGSTOP");
 
     // Halt all threads at the kernel level.
     for (uint32_t i = 0; i < m_threads.size(); ++i) {
