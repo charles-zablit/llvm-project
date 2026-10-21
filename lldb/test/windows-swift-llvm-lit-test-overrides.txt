@@ -13,6 +13,10 @@ xfail lldb-shell :: Swift/No.swiftmodule.test
 xfail lldb-shell :: Swift/global.test
 xfail lldb-shell :: Swift/runtime-initialization.test
 xfail lldb-shell :: SwiftREPL/ClosureScope.test
+# lldb reuses the programs' prebuilt Clang modules, when they match the shims of
+# the Swift SDK in the resource directory, so these tests find no module cache.
+xfail lldb-api :: lang/swift/clangimporter/headermap_conflict/TestSwiftHeadermapConflict.py
+xfail lldb-api :: lang/swift/clangimporter/include_conflict/TestSwiftIncludeConflict.py
 
 ### Tests that pass locally, but fail in CI reliably ###
 
