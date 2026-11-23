@@ -113,6 +113,8 @@ CompilerType PdbAstBuilderSwift::CreateType(PdbTypeSymId type,
     }
     if (cr.hasUniqueName()) {
       decorated = cr.UniqueName;
+    } else if (swift::Demangle::isSwiftSymbol(cr.Name)) {
+      decorated = cr.Name;
     } else {
       auto unwrapped = MaybeUnwrapBoundGeneric(cr, tpi);
       if (!unwrapped) {

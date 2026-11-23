@@ -383,6 +383,9 @@ static bool IsSwiftType(PdbTypeSymId type_id, PdbIndex& index) {
   llvm::cantFail(TypeDeserializer::deserializeAs<ClassRecord>(cvt, cr));
   if (cr.hasUniqueName())
     return swift::Demangle::isSwiftSymbol(cr.UniqueName);
+  // The definition of `$sxD` lacks the unique name of its forward declaration.
+  if (swift::Demangle::isSwiftSymbol(cr.Name))
+    return true;
   auto unwrapped = PdbAstBuilderSwift::MaybeUnwrapBoundGeneric(cr, index.tpi());
   // Deserialization failed.
   if (!unwrapped) {
@@ -1817,9 +1820,137 @@ bool SymbolFileNativePDB::ParseSupportFiles(CompileUnit &comp_unit,
 
 bool SymbolFileNativePDB::ParseImportedModules(
     const SymbolContext &sc, std::vector<SourceModule> &imported_modules) {
-  // PDB does not yet support module debug info
-  return false;
+  // BEGIN SWIFT
+  // See CodeViewDebug::emitImportedModules.
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
+  if (!sc.comp_unit || sc.comp_unit->GetLanguage() != eLanguageTypeSwift)
+    return false;
+  PdbSymUid uid(sc.comp_unit->GetID());
+  if (uid.kind() != PdbSymUidKind::Compiland)
+    return false;
+  CompilandIndexItem *cci =
+      m_index->compilands().GetCompiland(uid.asCompiland().modi);
+  if (!cci)
+    return false;
+
+  Log *log = GetLog(LLDBLog::Symbols);
+  std::vector<llvm::StringRef> names;
+  llvm::StringMap<llvm::StringRef> include_paths;
+  unsigned depth = 0;
+  for (const CVSymbol &sym : cci->m_debug_stream.getSymbolArray()) {
+    if (symbolOpensScope(sym.kind())) {
+      ++depth;
+      continue;
+    }
+    if (symbolEndsScope(sym.kind())) {
+      if (depth)
+        --depth;
+      continue;
+    }
+    if (depth)
+      continue;
+    if (sym.kind() == S_UNAMESPACE) {
+      UsingNamespaceSym ns(SymbolRecordKind::UsingNamespaceSym);
+      if (llvm::Error err =
+              SymbolDeserializer::deserializeAs<UsingNamespaceSym>(sym, ns)) {
+        LLDB_LOG_ERROR(log, std::move(err),
+                       "Failed to deserialize S_UNAMESPACE: {0}");
+        continue;
+      }
+      names.push_back(ns.Name);
+    } else if (sym.kind() == S_ENVBLOCK) {
+      EnvBlockSym env(SymbolRecordKind::EnvBlockSym);
+      if (llvm::Error err =
+              SymbolDeserializer::deserializeAs<EnvBlockSym>(sym, env)) {
+        LLDB_LOG_ERROR(log, std::move(err),
+                       "Failed to deserialize S_ENVBLOCK: {0}");
+        continue;
+      }
+      for (size_t i = 0; i + 1 < env.Fields.size(); i += 2) {
+        llvm::StringRef key = env.Fields[i];
+        if (key.consume_front("swift.include-path."))
+          include_paths[key] = env.Fields[i + 1];
+      }
+    }
+  }
+
+  for (llvm::StringRef name : names) {
+    SourceModule module;
+    llvm::SmallVector<llvm::StringRef, 4> components;
+    name.split(components, '.');
+    for (llvm::StringRef component : components)
+      module.path.push_back(ConstString(component));
+    auto path = include_paths.find(name);
+    if (path != include_paths.end())
+      module.search_path = ConstString(path->second);
+    imported_modules.push_back(std::move(module));
+  }
+  return true;
+  // END SWIFT
 }
+
+// BEGIN SWIFT
+#if LLDB_ENABLE_SWIFT
+static swift::Demangle::NodePointer
+FindSwiftModuleNode(swift::Demangle::NodePointer node) {
+  if (!node)
+    return nullptr;
+  if (node->getKind() == swift::Demangle::Node::Kind::Module)
+    return node;
+  for (swift::Demangle::NodePointer child : *node)
+    if (swift::Demangle::NodePointer module = FindSwiftModuleNode(child))
+      return module;
+  return nullptr;
+}
+#endif
+
+std::vector<CompilerContext>
+SymbolFileNativePDB::GetCompilerContextForUID(lldb::user_id_t uid) {
+  std::vector<CompilerContext> context;
+#if LLDB_ENABLE_SWIFT
+  // TypeSystemSwiftTypeRef::GetSwiftModuleFor keys expression contexts on it.
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
+  PdbSymUid sym_uid(uid);
+  if (sym_uid.kind() != PdbSymUidKind::CompilandSym)
+    return context;
+  PdbCompilandSymId id = sym_uid.asCompilandSym();
+  CompilandIndexItem *cci = m_index->compilands().GetCompiland(id.modi);
+  if (!cci || !cci->m_compile_opts ||
+      TranslateLanguage(cci->m_compile_opts->getLanguage()) !=
+          eLanguageTypeSwift)
+    return context;
+  CVSymbol sym = m_index->ReadSymbolRecord(id);
+  if (sym.kind() != S_GPROC32 && sym.kind() != S_LPROC32)
+    return context;
+  ProcSym proc(static_cast<SymbolRecordKind>(sym.kind()));
+  if (llvm::Error err = SymbolDeserializer::deserializeAs<ProcSym>(sym, proc)) {
+    LLDB_LOG_ERROR(GetLog(LLDBLog::Symbols), std::move(err),
+                   "Failed to deserialize ProcSym record: {0}");
+    return context;
+  }
+
+  // `a::Foo::bar`, or the mangled name when there is no display name.
+  llvm::StringRef name = proc.Name;
+  llvm::StringRef module_name;
+  llvm::StringRef base_name = name;
+  swift::Demangle::Context demangle_ctx;
+  if (swift::Demangle::isSwiftSymbol(name)) {
+    if (swift::Demangle::NodePointer module = FindSwiftModuleNode(
+            demangle_ctx.demangleSymbolAsNode(name)))
+      if (module->hasText())
+        module_name = module->getText();
+  } else if (name.contains("::")) {
+    module_name = name.split("::").first;
+    base_name = name.rsplit("::").second;
+  }
+  if (module_name.empty())
+    return context;
+  context.emplace_back(CompilerContextKind::Module, ConstString(module_name));
+  context.emplace_back(CompilerContextKind::Function, ConstString(base_name));
+#endif
+  return context;
+}
+// END SWIFT
 
 void SymbolFileNativePDB::ParseInlineSite(PdbCompilandSymId id,
                                           Address func_addr) {

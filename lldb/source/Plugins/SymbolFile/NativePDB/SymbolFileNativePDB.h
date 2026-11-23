@@ -102,6 +102,11 @@ public:
       const SymbolContext &sc,
       std::vector<lldb_private::SourceModule> &imported_modules) override;
 
+  // BEGIN SWIFT
+  std::vector<CompilerContext>
+  GetCompilerContextForUID(lldb::user_id_t uid) override;
+  // END SWIFT
+
   size_t ParseBlocksRecursive(Function &func) override;
 
   void FindGlobalVariables(ConstString name,
