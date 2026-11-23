@@ -1125,6 +1125,25 @@ void CodeViewDebug::emitInlinedCallSite(const FunctionInfo &FI,
 
   endSymbolRecord(InlineEnd);
 
+  // BEGIN SWIFT
+  // LF_FUNC_ID names an inlinee with its display name; lldb needs the
+  // mangled name, which an S_ENVBLOCK inside the inline site carries.
+  StringRef InlineeLinkageName = Site.Inlinee->getLinkageName();
+  if (CurrentSourceLanguage == SourceLanguage::Swift &&
+      !InlineeLinkageName.empty()) {
+    MCSymbol *EnvEnd = beginSymbolRecord(SymbolKind::S_ENVBLOCK);
+    OS.AddComment("Reserved");
+    OS.emitInt8(0);
+    OS.AddComment("Key");
+    emitNullTerminatedSymbolName(OS, "swift.linkage-name", 16);
+    OS.AddComment("Mangled name");
+    emitNullTerminatedSymbolName(OS, InlineeLinkageName, 16);
+    OS.AddComment("End of fields");
+    OS.emitInt8(0);
+    endSymbolRecord(EnvEnd);
+  }
+  // END SWIFT
+
   emitLocalVariableList(FI, Site.InlinedLocals);
 
   // Recurse on child inlined call sites before closing the scope.
