@@ -400,7 +400,8 @@ static bool IsSwiftType(PdbTypeSymId type_id, PdbIndex& index) {
   // The definition of `$sxD` lacks the unique name of its forward declaration.
   llvm::StringRef name =
       cr.Name.contains("::") ? cr.Name.rsplit("::").second : cr.Name;
-  if (swift::Demangle::isSwiftSymbol(name))
+  // `$swift.fixedbuffer` looks like a mangled name but is not one.
+  if (swift::Demangle::isSwiftSymbol(name) && !name.starts_with("$swift."))
     return true;
   auto unwrapped = PdbAstBuilderSwift::MaybeUnwrapBoundGeneric(cr, index.tpi());
   // Deserialization failed.
@@ -1274,6 +1275,17 @@ VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
   llvm::StringRef mangled_name = FindMangledSymbol(so).value_or("");
   if (!Mangled::IsMangledName(mangled_name))
     mangled_name = {};
+  // BEGIN SWIFT
+  // Like the DWARF parser, name a Swift global by its base name (CodeView
+  // qualifies it with its module, `a::x`) and drop its mangled name, which
+  // Variable::GetName would otherwise demangle.
+  if (comp_unit->GetLanguage() == eLanguageTypeSwift) {
+    llvm::StringRef base = llvm::StringRef(var_name).rsplit("::").second;
+    if (!base.empty())
+      var_name = base.str();
+    mangled_name = {};
+  }
+  // END SWIFT
   bool artificial = false;
   bool location_is_constant_data = false;
   bool static_member = false;
@@ -2359,8 +2371,26 @@ void SymbolFileNativePDB::ParseInlineSite(PdbCompilandSymId id,
       inlinee_name.append(fir.getName().str());
     }
   }
+  // BEGIN SWIFT
+  // CodeViewDebug::emitInlinedCallSite puts the mangled name of a Swift
+  // inlinee into an S_ENVBLOCK right after the S_INLINESITE.
+  std::string inlinee_mangled;
+  {
+    const CVSymbolArray &syms = cii->m_debug_stream.getSymbolArray();
+    auto it = syms.at(id.offset);
+    if (it != syms.end() && ++it != syms.end() && it->kind() == S_ENVBLOCK) {
+      EnvBlockSym env(SymbolRecordKind::EnvBlockSym);
+      if (llvm::Error err =
+              SymbolDeserializer::deserializeAs<EnvBlockSym>(*it, env))
+        llvm::consumeError(std::move(err));
+      else if (env.Fields.size() >= 2 &&
+               env.Fields[0] == "swift.linkage-name")
+        inlinee_mangled = env.Fields[1].str();
+    }
+  }
+  // END SWIFT
   inline_site_sp->inline_function_info = std::make_shared<InlineFunctionInfo>(
-      inlinee_name.c_str(), llvm::StringRef(), decl_up.get(),
+      inlinee_name.c_str(), llvm::StringRef(inlinee_mangled), decl_up.get(),
       callsite_up.get());
 
   m_inline_sites[opaque_uid] = inline_site_sp;

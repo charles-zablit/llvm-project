@@ -116,7 +116,8 @@ CompilerType PdbAstBuilderSwift::CreateType(PdbTypeSymId type,
     } else if (llvm::StringRef name = cr.Name.contains("::")
                                           ? cr.Name.rsplit("::").second
                                           : cr.Name;
-               swift::Demangle::isSwiftSymbol(name)) {
+               swift::Demangle::isSwiftSymbol(name) &&
+               !name.starts_with("$swift.")) {
       // A definition without the unique name of its forward declaration,
       // possibly qualified (`a::Outer::$s1a5OuterV5InnerVyx_GD`).
       decorated = name;
