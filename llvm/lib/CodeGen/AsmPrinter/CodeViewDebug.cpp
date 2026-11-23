@@ -61,6 +61,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/LEB128.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/SMLoc.h"
 #include "llvm/Support/ScopedPrinter.h"
@@ -971,8 +972,15 @@ void CodeViewDebug::emitBuildInfo() {
       getStringIdTypeIdx(TypeTable, "");
   BuildInfoArgs[BuildInfoRecord::BuildTool] =
       getStringIdTypeIdx(TypeTable, Asm->TM.Options.MCOptions.Argv0);
-  BuildInfoArgs[BuildInfoRecord::CommandLine] = getStringIdTypeIdx(
-      TypeTable, Asm->TM.Options.MCOptions.CommandlineArgs);
+  // BEGIN SWIFT
+  // Swift records the flags that lldb needs (DW_AT_APPLE_flags in DWARF) in
+  // the compile unit.
+  StringRef CommandLine = Asm->TM.Options.MCOptions.CommandlineArgs;
+  if (CommandLine.empty() && CurrentSourceLanguage == SourceLanguage::Swift)
+    CommandLine = CU->getFlags();
+  BuildInfoArgs[BuildInfoRecord::CommandLine] =
+      getStringIdTypeIdx(TypeTable, CommandLine);
+  // END SWIFT
 
   BuildInfoRecord BIR(BuildInfoArgs);
   TypeIndex BuildInfoIndex = TypeTable.writeLeafType(BIR);
@@ -1288,6 +1296,24 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     OS.emitInt32(uint32_t(FI.FrameProcOpts));
     endSymbolRecord(FrameProcEnd);
 
+    // BEGIN SWIFT
+    // Only external functions get their mangled name from a public symbol.
+    StringRef LinkageName = GlobalValue::dropLLVMManglingEscape(GV->getName());
+    if (CurrentSourceLanguage == SourceLanguage::Swift &&
+        LinkageName != FuncName) {
+      MCSymbol *LabelEnd = beginSymbolRecord(SymbolKind::S_LABEL32);
+      OS.AddComment("Offset");
+      OS.emitCOFFSecRel32(Fn, /*Offset=*/0);
+      OS.AddComment("Segment");
+      OS.emitCOFFSectionIndex(Fn);
+      OS.AddComment("Flags");
+      OS.emitInt8(0);
+      OS.AddComment("Linkage name");
+      emitNullTerminatedSymbolName(OS, LinkageName);
+      endSymbolRecord(LabelEnd);
+    }
+    // END SWIFT
+
     emitInlinees(FI.Inlinees);
     emitLocalVariableList(FI, FI.Locals);
     emitGlobalVariableList(FI.Globals);
@@ -1365,6 +1391,86 @@ CodeViewDebug::createDefRangeMem(uint16_t CVRegister, int Offset,
   return DR;
 }
 
+// BEGIN SWIFT
+/// Appends the DWARF encoding of the operations of \p Expr, or returns false
+/// if one of them has none. With \p ImplicitDeref, a final DW_OP_deref is left
+/// out because it is what makes the result a memory location, as DwarfExpression
+/// does.
+static bool appendDWARFOperations(const DIExpression *Expr, std::string &Out,
+                                  bool ImplicitDeref = false) {
+  raw_string_ostream OS(Out);
+  auto Ops = Expr->expr_ops();
+  for (auto It = Ops.begin(), End = Ops.end(); It != End; ++It) {
+    auto Op = *It;
+    if (ImplicitDeref && Op.getOp() == dwarf::DW_OP_deref &&
+        std::next(It) == End)
+      break;
+    switch (Op.getOp()) {
+    case dwarf::DW_OP_LLVM_entry_value:
+      break;
+    case dwarf::DW_OP_deref:
+    case dwarf::DW_OP_plus:
+    case dwarf::DW_OP_minus:
+    case dwarf::DW_OP_mul:
+    case dwarf::DW_OP_and:
+    case dwarf::DW_OP_or:
+    case dwarf::DW_OP_xor:
+    case dwarf::DW_OP_shl:
+    case dwarf::DW_OP_shr:
+    case dwarf::DW_OP_shra:
+    case dwarf::DW_OP_neg:
+    case dwarf::DW_OP_not:
+    case dwarf::DW_OP_dup:
+    case dwarf::DW_OP_drop:
+    case dwarf::DW_OP_swap:
+    case dwarf::DW_OP_over:
+    case dwarf::DW_OP_stack_value:
+      OS << char(Op.getOp());
+      break;
+    case dwarf::DW_OP_plus_uconst:
+    case dwarf::DW_OP_constu:
+      OS << char(Op.getOp());
+      encodeULEB128(Op.getArg(0), OS);
+      break;
+    case dwarf::DW_OP_consts:
+      OS << char(Op.getOp());
+      encodeSLEB128(static_cast<int64_t>(Op.getArg(0)), OS);
+      break;
+    case dwarf::DW_OP_deref_size:
+      OS << char(Op.getOp()) << char(Op.getArg(0));
+      break;
+    default:
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool appendDWARFRegister(const TargetRegisterInfo *TRI, Register Reg,
+                                std::optional<int64_t> Offset,
+                                std::string &Out) {
+  int DwarfReg = TRI->getDwarfRegNum(Reg, /*isEH=*/false);
+  if (DwarfReg < 0)
+    return false;
+  raw_string_ostream OS(Out);
+  if (Offset) {
+    if (DwarfReg < 32) {
+      OS << char(dwarf::DW_OP_breg0 + DwarfReg);
+    } else {
+      OS << char(dwarf::DW_OP_bregx);
+      encodeULEB128(DwarfReg, OS);
+    }
+    encodeSLEB128(*Offset, OS);
+  } else if (DwarfReg < 32) {
+    OS << char(dwarf::DW_OP_reg0 + DwarfReg);
+  } else {
+    OS << char(dwarf::DW_OP_regx);
+    encodeULEB128(DwarfReg, OS);
+  }
+  return true;
+}
+// END SWIFT
+
 void CodeViewDebug::collectVariableInfoFromMFTable(
     DenseSet<InlinedEntity> &Processed) {
   const MachineFunction &MF = *Asm->MF;
@@ -1389,22 +1495,40 @@ void CodeViewDebug::collectVariableInfoFromMFTable(
     // If the variable has an attached offset expression, extract it.
     int64_t ExprOffset = 0;
     int64_t DerefOffset = LocalVarDef::NoDeref;
+    // BEGIN SWIFT
+    bool Fits = true;
     if (VI.Expr) {
       SmallVector<uint64_t, 2> FirstRemaining;
-      if (!VI.Expr->extractLeadingOffset(ExprOffset, FirstRemaining))
-        continue;
-      if (!FirstRemaining.empty()) {
-        if (FirstRemaining.front() != dwarf::DW_OP_deref)
-          continue;
+      if (!VI.Expr->extractLeadingOffset(ExprOffset, FirstRemaining)) {
+        Fits = false;
+      } else if (!FirstRemaining.empty()) {
         SmallVector<uint64_t, 1> LastRemaining;
-        if (!DIExpression::extractLeadingOffset(
+        if (FirstRemaining.front() != dwarf::DW_OP_deref ||
+            !DIExpression::extractLeadingOffset(
                 ArrayRef(FirstRemaining).drop_front(), DerefOffset,
-                LastRemaining))
-          continue;
-        if (!LastRemaining.empty())
-          continue;
+                LastRemaining) ||
+            !LastRemaining.empty())
+          Fits = false;
       }
     }
+    if (!Fits) {
+      // Give lldb the DWARF location instead of dropping the variable.
+      if (CurrentSourceLanguage != SourceLanguage::Swift)
+        continue;
+      Register FrameReg;
+      StackOffset FrameOffset =
+          TFI->getFrameIndexReference(*Asm->MF, VI.getStackSlot(), FrameReg);
+      LocalVariable Var;
+      Var.DIVar = VI.Var;
+      if (FrameOffset.getScalable() ||
+          !appendDWARFRegister(TRI, FrameReg, FrameOffset.getFixed(),
+                               Var.SwiftDWARFLocation) ||
+          !appendDWARFOperations(VI.Expr, Var.SwiftDWARFLocation))
+        continue;
+      recordLocalVariable(std::move(Var), Scope);
+      continue;
+    }
+    // END SWIFT
 
     // Get the frame register used and the offset.
     Register FrameReg;
@@ -1436,6 +1560,43 @@ void CodeViewDebug::collectVariableInfoFromMFTable(
 
     recordLocalVariable(std::move(Var), Scope);
   }
+
+  // BEGIN SWIFT
+  // CoroSplit describes async variables with the entry value of the async
+  // context register, which no def range can express.
+  if (CurrentSourceLanguage != SourceLanguage::Swift)
+    return;
+  for (const MachineFunction::VariableDbgInfo &VI :
+       MF.getEntryValueVariableDbgInfo()) {
+    if (!VI.Var || !VI.Expr)
+      continue;
+    if (!Processed.insert(InlinedEntity(VI.Var, VI.Loc->getInlinedAt()))
+             .second)
+      continue;
+    LexicalScope *Scope = LScopes.findLexicalScope(VI.Loc);
+    if (!Scope)
+      continue;
+    std::string Register;
+    if (!appendDWARFRegister(TRI, VI.getEntryValueRegister(), std::nullopt,
+                             Register))
+      continue;
+    LocalVariable Var;
+    Var.DIVar = VI.Var;
+    raw_string_ostream ExprOS(Var.SwiftDWARFLocation);
+    ExprOS << char(dwarf::DW_OP_entry_value);
+    encodeULEB128(Register.size(), ExprOS);
+    ExprOS << Register;
+    if (!appendDWARFOperations(VI.Expr, Var.SwiftDWARFLocation,
+                               /*ImplicitDeref=*/true))
+      continue;
+    uint64_t LastOp = 0;
+    for (auto Op : VI.Expr->expr_ops())
+      LastOp = Op.getOp();
+    if (LastOp != dwarf::DW_OP_deref)
+      Var.SwiftDWARFLocation.push_back(char(dwarf::DW_OP_stack_value));
+    recordLocalVariable(std::move(Var), Scope);
+  }
+  // END SWIFT
 }
 
 void CodeViewDebug::calculateRanges(
@@ -2933,6 +3094,11 @@ void CodeViewDebug::emitLocalVariable(const FunctionInfo &FI,
     Flags |= LocalSymFlags::IsParameter;
   if (Var.DefRanges.empty())
     Flags |= LocalSymFlags::IsOptimizedOut;
+  // BEGIN SWIFT
+  if (CurrentSourceLanguage == SourceLanguage::Swift &&
+      Var.DIVar->isArtificial())
+    Flags |= LocalSymFlags::IsCompilerGenerated;
+  // END SWIFT
 
   OS.AddComment("TypeIndex");
   TypeIndex TI = getCompleteTypeIndex(Var.DIVar->getType());
@@ -3019,6 +3185,22 @@ void CodeViewDebug::emitLocalVariable(const FunctionInfo &FI,
       }
     }
   }
+
+  // BEGIN SWIFT
+  // Read by lldb as the location of the S_LOCAL right before it.
+  if (!Var.SwiftDWARFLocation.empty()) {
+    MCSymbol *EnvEnd = beginSymbolRecord(SymbolKind::S_ENVBLOCK);
+    OS.AddComment("Reserved");
+    OS.emitInt8(0);
+    OS.AddComment("Key");
+    emitNullTerminatedSymbolName(OS, "swift.dwarf-location", 16);
+    OS.AddComment("DWARF expression");
+    emitNullTerminatedSymbolName(OS, toHex(Var.SwiftDWARFLocation), 16);
+    OS.AddComment("End of fields");
+    OS.emitInt8(0);
+    endSymbolRecord(EnvEnd);
+  }
+  // END SWIFT
 }
 
 void CodeViewDebug::emitLexicalBlockList(ArrayRef<LexicalBlock *> Blocks,

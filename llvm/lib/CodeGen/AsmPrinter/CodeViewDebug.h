@@ -129,6 +129,10 @@ private:
               SmallVector<std::pair<const MCSymbol *, const MCSymbol *>, 1>>
         DefRanges;
     std::optional<APSInt> ConstantValue;
+    // BEGIN SWIFT
+    /// A DWARF location expression for a location no def range can describe.
+    std::string SwiftDWARFLocation;
+    // END SWIFT
   };
 
   struct CVGlobalVariable {
