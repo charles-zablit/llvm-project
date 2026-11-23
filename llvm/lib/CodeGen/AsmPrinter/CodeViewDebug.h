@@ -361,6 +361,10 @@ private:
 
   void emitBuildInfo();
 
+  // BEGIN SWIFT
+  void emitImportedModules();
+  // END SWIFT
+
   void emitInlineeLinesSubsection();
 
   void emitDebugInfoForThunk(const Function *GV,

@@ -15,7 +15,9 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallBitVector.h"
 #include "llvm/ADT/SmallString.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/TinyPtrVector.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/BinaryFormat/COFF.h"
@@ -679,6 +681,10 @@ void CodeViewDebug::endModule() {
 
   emitSecureHotPatchInformation();
 
+  // BEGIN SWIFT
+  emitImportedModules();
+  // END SWIFT
+
   emitInlineeLinesSubsection();
 
   // Emit per-function debug information.
@@ -980,6 +986,78 @@ void CodeViewDebug::emitBuildInfo() {
   endSymbolRecord(BIEnd);
   endCVSubsection(BISubsecEnd);
 }
+
+// BEGIN SWIFT
+/// CodeView has no record for an imported module, but a Swift module name is
+/// the namespace of its types and functions (`Swift::Int`), so `import M` is
+/// emitted as `using namespace M`. Include paths go into an S_ENVBLOCK.
+void CodeViewDebug::emitImportedModules() {
+  if (CurrentSourceLanguage != SourceLanguage::Swift)
+    return;
+
+  SmallVector<std::pair<std::string, StringRef>, 16> Imports;
+  StringSet<> Seen;
+  for (const DICompileUnit *CU : MMI->getModule()->debug_compile_units()) {
+    for (const DIImportedEntity *IE : CU->getImportedEntities()) {
+      const auto *M = dyn_cast_or_null<DIModule>(IE->getEntity());
+      if (!M)
+        continue;
+      SmallVector<StringRef, 4> Path;
+      for (const DIModule *P = M; P; P = dyn_cast_or_null<DIModule>(P->getScope()))
+        Path.push_back(P->getName());
+      std::string Name = join(llvm::reverse(Path), ".");
+      if (Name.empty() || !Seen.insert(Name).second)
+        continue;
+      Imports.emplace_back(std::move(Name), M->getIncludePath());
+    }
+  }
+  if (Imports.empty())
+    return;
+
+  MCSymbol *SymbolsEnd = beginCVSubsection(DebugSubsectionKind::Symbols);
+  for (const auto &Import : Imports) {
+    MCSymbol *End = beginSymbolRecord(SymbolKind::S_UNAMESPACE);
+    OS.AddComment("Imported module");
+    emitNullTerminatedSymbolName(OS, Import.first);
+    endSymbolRecord(End);
+  }
+
+  // Readers stop at the first empty string, so only non-empty values are
+  // emitted.
+  MCSymbol *EnvEnd = nullptr;
+  size_t EnvSize = 0;
+  auto EmitField = [&](StringRef Field) {
+    emitNullTerminatedSymbolName(OS, Field, /*MaxFixedRecordLength=*/16);
+    EnvSize += Field.size() + 1;
+  };
+  for (const auto &Import : Imports) {
+    if (Import.second.empty())
+      continue;
+    std::string Key = "swift.include-path." + Import.first;
+    if (EnvEnd && EnvSize + Key.size() + Import.second.size() + 2 > 0xF000) {
+      OS.emitInt8(0);
+      endSymbolRecord(EnvEnd);
+      EnvEnd = nullptr;
+    }
+    if (!EnvEnd) {
+      EnvEnd = beginSymbolRecord(SymbolKind::S_ENVBLOCK);
+      OS.AddComment("Reserved");
+      OS.emitInt8(0);
+      EnvSize = 1;
+    }
+    OS.AddComment("Key");
+    EmitField(Key);
+    OS.AddComment("Value");
+    EmitField(Import.second);
+  }
+  if (EnvEnd) {
+    OS.AddComment("End of fields");
+    OS.emitInt8(0);
+    endSymbolRecord(EnvEnd);
+  }
+  endCVSubsection(SymbolsEnd);
+}
+// END SWIFT
 
 void CodeViewDebug::emitInlineeLinesSubsection() {
   if (InlinedSubprograms.empty())
