@@ -19,7 +19,6 @@ class TestSwiftPrivateVar(TestBase):
 
     @swiftTest
     @skipEmbeddedSwiftOnWindows
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test expressions on a private global and on a local that shadows it"""
         self.build()

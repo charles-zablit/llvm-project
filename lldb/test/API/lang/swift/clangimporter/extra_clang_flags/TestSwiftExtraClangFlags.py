@@ -8,7 +8,6 @@ class TestSwiftExtraClangFlags(TestBase):
     @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
     @skipEmbeddedSwiftOnWindows
     @swiftClangImporterTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test_sanity(self):
         self.build()
         lldbutil.run_to_source_breakpoint(self, "break here",
@@ -20,7 +19,6 @@ class TestSwiftExtraClangFlags(TestBase):
     @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
     @skipEmbeddedSwiftOnWindows
     @swiftClangImporterTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test_extra_clang_flags(self):
         """
         Test that a debug-only module map can be installed by injecting a
@@ -65,7 +63,6 @@ class TestSwiftExtraClangFlags(TestBase):
     @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
     @skipEmbeddedSwiftOnWindows
     @swiftClangImporterTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test_invalid_extra_clang_flags(self):
         """
         Test that LLDB ignores specific invalid arguments in

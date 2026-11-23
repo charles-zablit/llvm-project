@@ -8,7 +8,6 @@ class TestSwiftEnumAssociated(TestBase):
 
     @swiftTest
     @skipEmbeddedSwiftOnWindows
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that a payload-less case of an enum with a payload case is shown"""
         self.build()
