@@ -105,9 +105,20 @@ public:
   // BEGIN SWIFT
   std::vector<CompilerContext>
   GetCompilerContextForUID(lldb::user_id_t uid) override;
+
+  bool GetCompileOption(const char *option, std::string &value,
+                        CompileUnit *cu = nullptr) override;
   // END SWIFT
 
   size_t ParseBlocksRecursive(Function &func) override;
+
+  // BEGIN SWIFT
+protected:
+  void GetCompileOptions(
+      std::unordered_map<lldb::CompUnitSP, lldb_private::Args> &args) override;
+
+public:
+  // END SWIFT
 
   void FindGlobalVariables(ConstString name,
                            const CompilerDeclContext &parent_decl_ctx,
@@ -362,6 +373,10 @@ private:
   std::once_flag m_cached_udt_declarations;
 
   lldb_private::UniqueCStringMap<uint32_t> m_type_base_names;
+  // BEGIN SWIFT
+  /// Swift mangled unique name -> type index of its records.
+  lldb_private::UniqueCStringMap<uint32_t> m_type_unique_names;
+  // END SWIFT
   /// typedef basename -> Global ID(s) of its S_UDT
   lldb_private::UniqueCStringMap<uint32_t> m_typedef_base_names;
   /// Qualified name of a scope of a typedef -> Global ID of a typedef in it.

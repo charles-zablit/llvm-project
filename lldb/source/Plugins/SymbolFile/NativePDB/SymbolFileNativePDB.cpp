@@ -18,6 +18,9 @@
 #include "lldb/Core/PluginManager.h"
 #include "lldb/Expression/Expression.h"
 #include "lldb/Symbol/CompileUnit.h"
+#include "lldb/Utility/DataBufferHeap.h"
+#include "lldb/Utility/DataExtractor.h"
+#include "lldb/Utility/OptionParsing.h"
 #include "lldb/Symbol/LineTable.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Symbol/SymbolContext.h"
@@ -31,6 +34,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringExtras.h"
 #include "llvm/DebugInfo/CodeView/CVRecord.h"
 #include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
 #include "llvm/DebugInfo/CodeView/DebugLinesSubsection.h"
@@ -377,6 +381,16 @@ static bool IsSwiftType(PdbTypeSymId type_id, PdbIndex& index) {
         TypeDeserializer::deserializeAs<ModifierRecord>(cvt, mfr));
     return IsSwiftType(PdbTypeSymId(mfr.ModifiedType, false), index);
   }
+  // BEGIN SWIFT
+  if (cvt.kind() == LF_ENUM) {
+    EnumRecord er;
+    if (llvm::Error err = TypeDeserializer::deserializeAs<EnumRecord>(cvt, er)) {
+      llvm::consumeError(std::move(err));
+      return false;
+    }
+    return er.hasUniqueName() && swift::Demangle::isSwiftSymbol(er.UniqueName);
+  }
+  // END SWIFT
   if (!llvm::is_contained({LF_STRUCTURE, LF_CLASS}, cvt.kind()))
     return false;
   ClassRecord cr;
@@ -384,7 +398,9 @@ static bool IsSwiftType(PdbTypeSymId type_id, PdbIndex& index) {
   if (cr.hasUniqueName())
     return swift::Demangle::isSwiftSymbol(cr.UniqueName);
   // The definition of `$sxD` lacks the unique name of its forward declaration.
-  if (swift::Demangle::isSwiftSymbol(cr.Name))
+  llvm::StringRef name =
+      cr.Name.contains("::") ? cr.Name.rsplit("::").second : cr.Name;
+  if (swift::Demangle::isSwiftSymbol(name))
     return true;
   auto unwrapped = PdbAstBuilderSwift::MaybeUnwrapBoundGeneric(cr, index.tpi());
   // Deserialization failed.
@@ -611,6 +627,74 @@ Block *SymbolFileNativePDB::CreateBlock(PdbCompilandSymId block_id) {
   return nullptr;
 }
 
+// BEGIN SWIFT
+/// CodeViewDebug::emitDebugInfoForFunction names a label at the entry of a
+/// Swift procedure with the mangled name of the function.
+static std::optional<llvm::StringRef>
+FindLinkageNameLabel(const CompilandIndexItem &cci, uint32_t proc_offset,
+                     const ProcSym &proc) {
+#if LLDB_ENABLE_SWIFT
+  CVSymbolArray syms = limitSymbolArrayToScope(
+      cci.m_debug_stream.getSymbolArray(), proc_offset);
+  syms.drop_front();
+  for (const CVSymbol &sym : syms) {
+    if (symbolOpensScope(sym.kind()))
+      break;
+    if (sym.kind() != S_LABEL32)
+      continue;
+    LabelSym label(SymbolRecordKind::LabelSym);
+    if (llvm::Error err =
+            SymbolDeserializer::deserializeAs<LabelSym>(sym, label)) {
+      llvm::consumeError(std::move(err));
+      continue;
+    }
+    if (label.CodeOffset == proc.CodeOffset && label.Segment == proc.Segment &&
+        swift::Demangle::isSwiftSymbol(label.Name))
+      return label.Name;
+  }
+#endif
+  return std::nullopt;
+}
+
+/// CodeViewDebug::emitLocalVariable puts a location that no def range can
+/// describe into an S_ENVBLOCK right after the S_LOCAL.
+static std::optional<DWARFExpression>
+FindSwiftDWARFLocation(const CompilandIndexItem &cci, uint32_t local_offset,
+                       const ArchSpec &arch) {
+  const CVSymbolArray &syms = cci.m_debug_stream.getSymbolArray();
+  auto it = syms.at(local_offset);
+  if (it == syms.end())
+    return std::nullopt;
+  for (++it; it != syms.end(); ++it) {
+    CVSymbol sym = *it;
+    if (sym.kind() >= S_DEFRANGE && sym.kind() <= S_DEFRANGE_REGISTER_REL)
+      continue;
+    if (sym.kind() == S_DEFRANGE_REGISTER_REL_INDIR)
+      continue;
+    if (sym.kind() != S_ENVBLOCK)
+      return std::nullopt;
+    EnvBlockSym env(SymbolRecordKind::EnvBlockSym);
+    if (llvm::Error err =
+            SymbolDeserializer::deserializeAs<EnvBlockSym>(sym, env)) {
+      llvm::consumeError(std::move(err));
+      return std::nullopt;
+    }
+    if (env.Fields.size() < 2 || env.Fields[0] != "swift.dwarf-location")
+      return std::nullopt;
+    std::string bytes;
+    if (!llvm::tryGetFromHex(env.Fields[1], bytes))
+      return std::nullopt;
+    auto buffer = std::make_shared<DataBufferHeap>(bytes.data(), bytes.size());
+    DataExtractor extractor(buffer, arch.GetByteOrder(),
+                            arch.GetAddressByteSize());
+    DWARFExpression expr(extractor);
+    expr.SetRegisterKind(lldb::eRegisterKindDWARF);
+    return expr;
+  }
+  return std::nullopt;
+}
+// END SWIFT
+
 lldb::FunctionSP SymbolFileNativePDB::CreateFunction(PdbCompilandSymId func_id,
                                                      CompileUnit &comp_unit) {
   const CompilandIndexItem *cci =
@@ -653,6 +737,11 @@ lldb::FunctionSP SymbolFileNativePDB::CreateFunction(PdbCompilandSymId func_id,
 
   std::optional<llvm::StringRef> mangled_opt = FindMangledSymbol(
       SegmentOffset(proc.Segment, proc.CodeOffset), proc.FunctionType);
+  // BEGIN SWIFT
+  if (std::optional<llvm::StringRef> label =
+          FindLinkageNameLabel(*cci, func_id.offset, proc))
+    mangled_opt = label;
+  // END SWIFT
   Mangled mangled(mangled_opt.value_or(proc.Name));
 
   FunctionSP func_sp = std::make_shared<Function>(
@@ -1890,6 +1979,104 @@ bool SymbolFileNativePDB::ParseImportedModules(
 }
 
 // BEGIN SWIFT
+/// The command line of the LF_BUILDINFO of a Swift compile unit, where LLVM
+/// puts the flags DWARF records as DW_AT_APPLE_flags.
+static std::optional<std::string>
+GetSwiftCompileFlags(PdbIndex &index, const CompilandIndexItem &cci) {
+  if (!cci.m_compile_opts ||
+      TranslateLanguage(cci.m_compile_opts->getLanguage()) !=
+          eLanguageTypeSwift ||
+      cci.m_build_info.size() <= BuildInfoRecord::CommandLine)
+    return std::nullopt;
+  LazyRandomTypeCollection &ids = index.ipi().typeCollection();
+  std::optional<CVType> cvt =
+      ids.tryGetType(cci.m_build_info[BuildInfoRecord::CommandLine]);
+  if (!cvt || cvt->kind() != LF_STRING_ID)
+    return std::nullopt;
+  StringIdRecord sir;
+  if (llvm::Error err = TypeDeserializer::deserializeAs<StringIdRecord>(*cvt, sir)) {
+    llvm::consumeError(std::move(err));
+    return std::nullopt;
+  }
+  std::string flags;
+  // Long strings are split into an LF_SUBSTR_LIST of prefixes.
+  std::optional<CVType> list =
+      sir.Id.isNoneType() ? std::nullopt : ids.tryGetType(sir.Id);
+  if (list && list->kind() == LF_SUBSTR_LIST) {
+    StringListRecord slr;
+    if (llvm::Error err =
+            TypeDeserializer::deserializeAs<StringListRecord>(*list, slr)) {
+      llvm::consumeError(std::move(err));
+      return std::nullopt;
+    }
+    for (TypeIndex part : slr.StringIndices) {
+      std::optional<CVType> part_cvt = ids.tryGetType(part);
+      if (!part_cvt || part_cvt->kind() != LF_STRING_ID)
+        continue;
+      StringIdRecord part_sir;
+      if (llvm::Error err = TypeDeserializer::deserializeAs<StringIdRecord>(
+              *part_cvt, part_sir)) {
+        llvm::consumeError(std::move(err));
+        continue;
+      }
+      flags += part_sir.String;
+    }
+  }
+  flags += sir.String;
+  if (flags.empty())
+    return std::nullopt;
+  return flags;
+}
+
+bool SymbolFileNativePDB::GetCompileOption(const char *option,
+                                           std::string &value,
+                                           CompileUnit *cu) {
+  value.clear();
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
+  auto find_in = [&](const CompilandIndexItem &cci) {
+    std::optional<std::string> flags = GetSwiftCompileFlags(*m_index, cci);
+    if (!flags || !llvm::StringRef(*flags).contains(option))
+      return false;
+    Args args(*flags);
+    OptionParsing::GetOptionValueAsString(args, option, value);
+    return true;
+  };
+  if (cu) {
+    PdbSymUid uid(cu->GetID());
+    if (uid.kind() != PdbSymUidKind::Compiland)
+      return false;
+    CompilandIndexItem *cci =
+        m_index->compilands().GetCompiland(uid.asCompiland().modi);
+    return cci && find_in(*cci);
+  }
+  for (uint32_t modi = 0; modi < m_index->dbi().modules().getModuleCount();
+       ++modi)
+    if (find_in(m_index->compilands().GetOrCreateCompiland(modi)))
+      return true;
+  return false;
+}
+
+void SymbolFileNativePDB::GetCompileOptions(
+    std::unordered_map<lldb::CompUnitSP, lldb_private::Args> &args) {
+  std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
+  for (uint32_t i = 0, e = GetNumCompileUnits(); i < e; ++i) {
+    CompUnitSP cu = GetCompileUnitAtIndex(i);
+    if (!cu)
+      continue;
+    PdbSymUid uid(cu->GetID());
+    if (uid.kind() != PdbSymUidKind::Compiland)
+      continue;
+    CompilandIndexItem *cci =
+        m_index->compilands().GetCompiland(uid.asCompiland().modi);
+    if (!cci)
+      continue;
+    if (std::optional<std::string> flags = GetSwiftCompileFlags(*m_index, *cci))
+      args.insert({cu, Args(*flags)});
+  }
+}
+// END SWIFT
+
+// BEGIN SWIFT
 #if LLDB_ENABLE_SWIFT
 static swift::Demangle::NodePointer
 FindSwiftModuleNode(swift::Demangle::NodePointer node) {
@@ -2349,6 +2536,11 @@ void SymbolFileNativePDB::CacheGlobalBaseNames() {
 
     m_func_base_names.Append(ConstString(basename), gid);
     m_func_full_names.Append(ConstString(proc.Name), gid);
+    // BEGIN SWIFT
+    if (std::optional<llvm::StringRef> label =
+            FindLinkageNameLabel(cci, ref.SymOffset, proc))
+      m_func_full_names.Append(ConstString(*label), gid);
+    // END SWIFT
 
     // To see if this is a member function, check the type.
     auto type = m_index->tpi().getType(proc.FunctionType);
@@ -2533,6 +2725,22 @@ void SymbolFileNativePDB::FindTypes(const lldb_private::TypeQuery &query,
     return;
 
   std::lock_guard<std::recursive_mutex> guard(GetModuleMutex());
+
+  // BEGIN SWIFT
+  if (query.GetSearchByMangledName()) {
+    std::vector<uint32_t> mangled_matches;
+    m_type_unique_names.GetValues(query.GetTypeBasename(), mangled_matches);
+    for (uint32_t match_idx : mangled_matches) {
+      TypeSP type_sp = GetOrCreateType(TypeIndex(match_idx));
+      if (!type_sp)
+        continue;
+      results.InsertUnique(type_sp);
+      if (results.Done(query))
+        return;
+    }
+    return;
+  }
+  // END SWIFT
 
   // We can't query for the full name because the type might reside
   // in an anonymous namespace. Search for the basename in our map and check the
@@ -2736,6 +2944,12 @@ VariableSP SymbolFileNativePDB::CreateLocalVariable(PdbCompilandSymId scope_id,
     Function *func = func_block->CalculateSymbolContextFunction();
     if (!func)
       return nullptr;
+    // BEGIN SWIFT
+    if (std::optional<DWARFExpression> expr = FindSwiftDWARFLocation(
+            *cii, var_id.offset, module->GetArchitecture()))
+      var_info.location =
+          DWARFExpressionList(module, std::move(*expr), nullptr);
+    // END SWIFT
     // Use empty dwarf expr if optimized away so that it won't be filtered out
     // when lookuping local variables in this scope.
     if (!var_info.location.IsValid())
@@ -2757,6 +2971,20 @@ VariableSP SymbolFileNativePDB::CreateLocalVariable(PdbCompilandSymId scope_id,
       is_param ? eValueTypeVariableArgument : eValueTypeVariableLocal;
   bool external = false;
   bool artificial = false;
+  // BEGIN SWIFT
+  if (!is_constant) {
+    CVSymbol local_sym = cii->m_debug_stream.readSymbolAtOffset(var_id.offset);
+    if (local_sym.kind() == S_LOCAL) {
+      LocalSym local(SymbolRecordKind::LocalSym);
+      if (llvm::Error err =
+              SymbolDeserializer::deserializeAs<LocalSym>(local_sym, local))
+        llvm::consumeError(std::move(err));
+      else
+        artificial = (local.Flags & LocalSymFlags::IsCompilerGenerated) !=
+                     LocalSymFlags::None;
+    }
+  }
+  // END SWIFT
   bool static_member = false;
   Variable::RangeList scope_ranges;
   VariableSP var_sp = std::make_shared<Variable>(
@@ -3234,6 +3462,14 @@ void SymbolFileNativePDB::BuildParentMap() {
     CVTagRecord tag = CVTagRecord::create(type);
 
     RecordIndices &indices = record_indices[tag.asTag().getUniqueName()];
+    // BEGIN SWIFT
+#if LLDB_ENABLE_SWIFT
+    if (tag.asTag().hasUniqueName() &&
+        swift::Demangle::isSwiftSymbol(tag.asTag().getUniqueName()))
+      m_type_unique_names.Append(ConstString(tag.asTag().getUniqueName()),
+                                 ti->getIndex());
+#endif
+    // END SWIFT
     if (tag.asTag().isForwardRef()) {
       indices.forward = *ti;
     } else {
@@ -3301,6 +3537,9 @@ void SymbolFileNativePDB::BuildParentMap() {
   // After calling Append(), the type-name map needs to be sorted again to be
   // able to look up a type by its name.
   m_type_base_names.Sort(std::less<uint32_t>());
+  // BEGIN SWIFT
+  m_type_unique_names.Sort(std::less<uint32_t>());
+  // END SWIFT
 
   for (const uint32_t gid : m_index->globals().getGlobalsTable()) {
     CVSymbol sym = m_index->symrecords().readRecord(gid);
