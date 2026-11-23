@@ -19,7 +19,6 @@ class TestSwiftPOValueTypes(TestBase):
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test_value_types(self):
         """Test 'po' on a variety of value types with and without custom descriptions."""
         self.build()

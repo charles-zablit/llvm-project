@@ -39,7 +39,6 @@ class TestSwiftGenericStructDebugInfoGenericFlatMap(TestBase):
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @skipIf(debug_info=["pdb"])
     def test(self):
         """Test generic struct arguments of closures passed to flatMap"""
         self.build()

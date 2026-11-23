@@ -15,7 +15,6 @@ class TestSwiftGenericClassArg(TestBase):
 
     @skipEmbeddedSwiftOnWindows
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that generic class and struct arguments resolve to their bound types"""
         self.build()

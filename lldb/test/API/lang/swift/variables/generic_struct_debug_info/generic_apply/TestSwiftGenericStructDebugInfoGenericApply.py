@@ -26,7 +26,6 @@ class TestSwiftGenericStructDebugInfoGenericApply(TestBase):
 
     @swiftTest
     @skipEmbeddedSwiftOnWindows
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that a generic closure argument resolves to its bound type"""
         self.build()

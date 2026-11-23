@@ -19,14 +19,12 @@ class TestSwiftResiliencePrivateField(lldbtest.TestBase):
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         self.build()
         self.check()
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test_no_explicit_module_loader(self):
         """Test modules loaded from Swift AST sections."""
         self.build(dictionary={"SWIFT_ENABLE_EXPLICIT_MODULES": "NO"})

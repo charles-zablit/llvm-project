@@ -12,7 +12,6 @@ class TestSwiftActorTypes(TestBase):
     @skipEmbeddedSwiftOnWindows
     @skipEmbeddedSwiftOnLinux
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test_swift_class_types(self):
         """Test swift Actor types"""
         self.build()

@@ -8,7 +8,6 @@ class TestSwiftProtocolExtensionTwo(TestBase):
 
     @skipEmbeddedSwiftOnWindows
     @swiftTest
-    @skipIf(debug_info=["pdb"])
     def test(self):
         """Test evaluating self and a computed property in a constrained extension"""
         self.build()

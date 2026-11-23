@@ -19,7 +19,6 @@ class TestSwiftReferenceCount(TestBase):
 
     @swiftTest
     @skipEmbeddedSwiftOnWindows
-    @skipIf(debug_info=["pdb"])
     def test(self):
         """Test the language swift refcount command on class, struct and unknown names"""
         self.build()

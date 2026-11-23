@@ -19,7 +19,6 @@ class TestSwiftClassError(TestBase):
 
     @skipEmbeddedSwiftOnWindows
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that generic Error-conforming class arguments resolve dynamically"""
         self.build()

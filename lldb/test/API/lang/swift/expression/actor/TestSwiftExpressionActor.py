@@ -8,7 +8,6 @@ import os
 class TestSwiftExpressionActor(TestBase):
     @requireNotEmbeddedSwift
     @swiftTest
-    @skipIf(debug_info=["pdb"])
     def test_static_func(self):
         self.build()
         lldbutil.run_to_source_breakpoint(
@@ -19,7 +18,6 @@ class TestSwiftExpressionActor(TestBase):
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @skipIf(debug_info=["pdb"])
     def test_func(self):
         self.build()
         lldbutil.run_to_source_breakpoint(

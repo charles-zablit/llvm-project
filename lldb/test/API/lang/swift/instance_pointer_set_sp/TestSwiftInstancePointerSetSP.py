@@ -24,7 +24,6 @@ class TestSwiftInstancePointerSetSP(lldbtest.TestBase):
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test_instancepointerset_sp(self):
         """Test that we correctly track instance pointers in ValueObjectPrinter"""
         self.build()

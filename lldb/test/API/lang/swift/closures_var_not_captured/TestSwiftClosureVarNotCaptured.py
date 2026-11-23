@@ -59,7 +59,6 @@ class TestSwiftClosureVarNotCaptured(TestBase):
     # which matters for the closures passed to map() over multiple elements.
     @requireNotEmbeddedSwift
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         self.build()
         target, process, _, bkpt = lldbutil.run_to_source_breakpoint(

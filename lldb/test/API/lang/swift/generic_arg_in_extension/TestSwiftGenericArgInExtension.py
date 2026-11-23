@@ -19,7 +19,6 @@ class TestSwiftGenericArgInExtension(TestBase):
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that a generic argument of a method in a protocol extension is resolved"""
         self.build()

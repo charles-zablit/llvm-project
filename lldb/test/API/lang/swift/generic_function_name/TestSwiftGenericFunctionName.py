@@ -7,7 +7,6 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftGenericFunction(lldbtest.TestBase):
     @skipEmbeddedSwiftOnWindows
     @swiftTest
-    @skipIf(debug_info=["pdb"])
     def test(self):
         """Test display of generic function names"""
         self.build()

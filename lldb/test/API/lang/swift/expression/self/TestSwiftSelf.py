@@ -25,7 +25,6 @@ class TestSwiftSelf(TestBase):
 
     @swiftTest
     @skipEmbeddedSwiftOnWindows
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that self can be evaluated in struct and class methods"""
         self.build()

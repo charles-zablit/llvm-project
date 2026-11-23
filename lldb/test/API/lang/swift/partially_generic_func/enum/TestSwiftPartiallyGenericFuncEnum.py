@@ -26,7 +26,6 @@ class TestSwiftPartiallyGenericFuncEnum(TestBase):
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @skipIf(debug_info=["pdb"])
     def test(self):
         """Test that a generic enum argument of a generic function shows its case"""
         self.build()

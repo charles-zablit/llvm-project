@@ -20,7 +20,6 @@ class TestSwiftFoundationTypeDate(TestBase):
     @requireNotEmbeddedSwift
     @swiftClangImporterTest
     @skipIf(oslist=["linux"])
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test the summary of a Date variable and expression result"""
         self.build()

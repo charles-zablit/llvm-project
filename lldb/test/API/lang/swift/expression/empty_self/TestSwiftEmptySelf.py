@@ -25,7 +25,6 @@ class TestSwiftEmptySelf(TestBase):
 
     @swiftTest
     @skipEmbeddedSwiftOnWindows
-    @skipIf(debug_info=["pdb"])
     def test(self):
         """Test evaluating self in struct and class methods with no stored properties"""
         self.build()

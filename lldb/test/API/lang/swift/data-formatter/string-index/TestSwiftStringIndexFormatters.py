@@ -15,7 +15,9 @@ class TestCase(TestBase):
     @skipUnlessFoundationEssentials
     @skipIfLinux  # https://github.com/swiftlang/llvm-project/issues/13465
     @swiftClangImporterTest
-    @expectedFailureAll(debug_info=["pdb"])
+    # With pdb, lldb dies on an illegal instruction while formatting the array
+    # of String.UnicodeScalarView.Index.
+    @skipIf(debug_info=["pdb"])
     def test(self):
         """Test String.Index summary strings for native and bridged Strings."""
         self.build()

@@ -18,7 +18,6 @@ class TestSwiftGenericErrorTuple(TestBase):
     @swiftTest
     @skipEmbeddedSwiftOnLinux
     @skipEmbeddedSwiftOnWindows
-    @skipIf(debug_info=["pdb"])
     def test(self):
         """Test that generic tuples of errors resolve to their bound types"""
         self.build()

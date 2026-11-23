@@ -7,7 +7,6 @@ class TestSwiftDisableLanguageUnwinder(lldbtest.TestBase):
 
     @skipEmbeddedSwiftOnLinux
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test async unwind"""
         self.build()

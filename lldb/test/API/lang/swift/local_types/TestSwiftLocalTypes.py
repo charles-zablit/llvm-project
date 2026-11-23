@@ -46,7 +46,6 @@ class TestSwiftLocalTypes(TestBase):
 
     @skipEmbeddedSwiftOnWindows
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that values of function-local struct and class types can be inspected"""
         self.build()

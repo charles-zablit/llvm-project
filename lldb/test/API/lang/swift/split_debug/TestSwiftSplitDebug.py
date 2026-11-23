@@ -25,7 +25,6 @@ class TestSwiftSplitDebug(lldbtest.TestBase):
 
     @skipEmbeddedSwiftOnWindows
     @swiftTest
-    @skipIf(debug_info=["pdb"])
     def test_split_debug_info(self):
         """Test split debug info"""
         self.build()

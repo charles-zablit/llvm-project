@@ -31,7 +31,6 @@ class TestSwiftFilePrivate(TestBase):
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that we find the right file-local private decls using the discriminator"""
         self.build()

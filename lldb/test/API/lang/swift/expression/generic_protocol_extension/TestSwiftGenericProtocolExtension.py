@@ -19,7 +19,6 @@ class TestSwiftGenericProtocolExtension(TestBase):
 
     @skipEmbeddedSwiftOnWindows
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that self in a protocol extension method resolves to the generic class"""
         self.build()

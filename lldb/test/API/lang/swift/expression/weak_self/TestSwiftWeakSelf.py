@@ -20,7 +20,6 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftGenericExtension(TestBase):
      @requireNotEmbeddedSwift
      @swiftTest
-     @expectedFailureAll(debug_info=["pdb"])
      def test(self):
         self.build()
 

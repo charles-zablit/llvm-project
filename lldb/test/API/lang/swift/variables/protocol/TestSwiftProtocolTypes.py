@@ -21,7 +21,6 @@ import lldbsuite.test.lldbutil as lldbutil
 class TestSwiftProtocolTypes(TestBase):
     @skipEmbeddedSwiftOnWindows
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test_swift_protocol_types(self):
         """Test support for protocol types"""
         self.build()

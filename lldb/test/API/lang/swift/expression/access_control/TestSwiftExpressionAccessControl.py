@@ -9,7 +9,6 @@ class TestSwiftExpressionAccessControl(TestBase):
 
     @swiftTest
     @skipEmbeddedSwiftOnWindows
-    @skipIf(debug_info=["pdb"])
     def test_swift_expression_access_control(self):
         """Make sure expressions ignore access control"""
         self.build()

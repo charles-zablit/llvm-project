@@ -9,7 +9,6 @@ class TestCase(TestBase):
 
     @requireNotEmbeddedSwift
     @swiftTest
-    @expectedFailureAll(debug_info=["pdb"])
     def test_top_level_task(self):
         """Test Task synthetic child provider for top-level Task."""
         self.build()

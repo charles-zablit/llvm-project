@@ -15,7 +15,6 @@ class TestSwiftEnumTagged(TestBase):
 
     @swiftTest
     @skipEmbeddedSwiftOnWindows
-    @expectedFailureAll(debug_info=["pdb"])
     def test(self):
         """Test that the payload of a private multi-payload enum with class payloads is resolved"""
         self.build()

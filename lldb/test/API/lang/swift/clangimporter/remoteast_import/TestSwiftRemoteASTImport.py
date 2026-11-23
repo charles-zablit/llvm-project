@@ -22,7 +22,6 @@ class TestSwiftRemoteASTImport(TestBase):
     @skipIf(setting=('symbols.use-swift-clangimporter', 'false'))
     @skipIfLinux
     @swiftClangImporterTest
-    @expectedFailureAll(debug_info=["pdb"])
     def testSwiftRemoteASTImport(self):
         """This tests that RemoteAST querying the dynamic type of a variable
         doesn't import any modules into a module SwiftASTContext that
