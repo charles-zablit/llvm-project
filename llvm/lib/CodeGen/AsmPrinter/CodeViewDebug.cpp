@@ -1273,7 +1273,12 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
     OS.AddComment("Code size");
     OS.emitAbsoluteSymbolDiff(FI.End, Fn, 4);
     OS.AddComment("Offset after prologue");
-    OS.emitInt32(0);
+    // BEGIN SWIFT
+    if (FI.PrologEnd)
+      OS.emitAbsoluteSymbolDiff(FI.PrologEnd, Fn, 4);
+    else
+      OS.emitInt32(0);
+    // END SWIFT
     OS.AddComment("Offset before epilogue");
     OS.emitInt32(0);
     OS.AddComment("Function type index");
@@ -3503,6 +3508,17 @@ void CodeViewDebug::beginInstruction(const MachineInstr *MI) {
   if (!Asm || !CurFn || MI->isDebugInstr() ||
       MI->getFlag(MachineInstr::FrameSetup))
     return;
+
+  // BEGIN SWIFT
+  // lldb takes the prologue to end at the first line entry of an inline site
+  // unless the procedure says where it ends, as MSVC's do.
+  if (CurrentSourceLanguage == SourceLanguage::Swift && !CurFn->PrologEnd &&
+      MI->getParent()->isEntryBlock()) {
+    MCSymbol *PrologEnd = MMI->getContext().createTempSymbol();
+    OS.emitLabel(PrologEnd);
+    CurFn->PrologEnd = PrologEnd;
+  }
+  // END SWIFT
 
   // If the first instruction of a new MBB has no location, find the first
   // instruction with a location and use that.

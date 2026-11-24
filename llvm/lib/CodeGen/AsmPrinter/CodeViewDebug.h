@@ -204,6 +204,10 @@ private:
 
     const MCSymbol *Begin = nullptr;
     const MCSymbol *End = nullptr;
+    // BEGIN SWIFT
+    /// The first instruction after the prologue, if it is in the entry block.
+    const MCSymbol *PrologEnd = nullptr;
+    // END SWIFT
     unsigned FuncId = 0;
     unsigned LastFileId = 0;
 
