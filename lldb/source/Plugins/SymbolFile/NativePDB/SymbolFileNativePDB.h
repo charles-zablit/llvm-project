@@ -286,6 +286,9 @@ private:
   lldb::TypeSP CreateSwiftTypeAlias(PdbGlobalSymId id,
                                     const llvm::codeview::UDTSym &udt,
                                     lldb::TypeSP target_type);
+  /// The Swift type of the function \p func_id named \p mangled.
+  lldb::TypeSP CreateSwiftFunctionType(PdbCompilandSymId func_id,
+                                       llvm::StringRef mangled);
   /// The Swift type alias whose S_UDT is named \p mangled_name.
   lldb::TypeSP FindSwiftTypeAlias(llvm::StringRef mangled_name);
   /// The mangled name of the type alias of the Swift global \p name of \p cci.

@@ -11,6 +11,8 @@
 #include "PdbUtil.h"
 #include "SymbolFileNativePDB.h"
 
+#include "Plugins/LanguageRuntime/Swift/SwiftLanguageRuntime.h"
+#include "Plugins/TypeSystem/Swift/SwiftDemangle.h"
 #include "Plugins/TypeSystem/Swift/TypeSystemSwiftTypeRef.h"
 #include "lldb/Symbol/ObjectFile.h"
 #include "lldb/Utility/LLDBAssert.h"
@@ -189,6 +191,19 @@ CompilerType PdbAstBuilderSwift::GetOrCreateType(PdbTypeSymId type) {
   if (ct)
     m_uid_to_type[uid] = ct;
   return ct;
+}
+
+CompilerType PdbAstBuilderSwift::GetFunctionType(llvm::StringRef mangled_name) {
+  swift::Demangle::Demangler dem;
+  swift::Demangle::NodePointer type =
+      swift_demangle::GetFunctionTypeFromMangledSymbol(dem, mangled_name);
+  if (!type)
+    return {};
+  auto mangling = swift_demangle::GetMangledName(
+      dem, type, SwiftLanguageRuntime::GetManglingFlavor(mangled_name));
+  if (!mangling.isSuccess())
+    return {};
+  return m_swift_ts.GetTypeFromMangledTypename(ConstString(mangling.result()));
 }
 
 llvm::StringRef PdbAstBuilderSwift::GetTypeAliasName(const UDTSym &udt) {

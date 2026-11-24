@@ -340,6 +340,65 @@ inline bool IsAnyGeneric(Node::Kind kind) {
   }
 }
 
+/// The type node of the function that \p mangled_name mangles, or null if it
+/// does not mangle a function, like a type metadata accessor.
+inline swift::Demangle::NodePointer
+GetFunctionTypeFromMangledSymbol(swift::Demangle::Demangler &dem,
+                                 llvm::StringRef mangled_name) {
+  using namespace swift::Demangle;
+  NodePointer global = dem.demangleSymbol(mangled_name);
+  if (!global || global->getKind() != Node::Kind::Global ||
+      !global->hasChildren())
+    return nullptr;
+  NodePointer entity = global->getFirstChild();
+  // An async funclet is a part of the function in the second child.
+  if (global->getNumChildren() == 2 &&
+      (entity->getKind() == Node::Kind::AsyncAwaitResumePartialFunction ||
+       entity->getKind() == Node::Kind::AsyncSuspendResumePartialFunction))
+    entity = global->getChild(1);
+  // TODO: Thunks and specializations have a second child. Their signature is
+  // not the mangled function type.
+  else if (global->getNumChildren() != 1)
+    return nullptr;
+  if (entity->getKind() == Node::Kind::Static && entity->hasChildren())
+    entity = entity->getFirstChild();
+  switch (entity->getKind()) {
+  case Node::Kind::Function:
+  case Node::Kind::Allocator:
+  case Node::Kind::Constructor:
+  case Node::Kind::ExplicitClosure:
+  case Node::Kind::ImplicitClosure:
+  case Node::Kind::Getter:
+    break;
+  default:
+    // A type metadata accessor, for example, ends in the type of its
+    // metadata.
+    return nullptr;
+  }
+  if (!entity->hasChildren())
+    return nullptr;
+  NodePointer type = entity->getLastChild();
+  // A getter mangles the type of its variable.
+  if (entity->getKind() == Node::Kind::Getter &&
+      type->getKind() == Node::Kind::Variable && type->hasChildren() &&
+      type->getLastChild()->getKind() == Node::Kind::Type) {
+    NodePointer args_ty = dem.createNode(Node::Kind::Type);
+    args_ty->addChild(dem.createNode(Node::Kind::Tuple), dem);
+    NodePointer args = dem.createNode(Node::Kind::ArgumentTuple);
+    args->addChild(args_ty, dem);
+    NodePointer rett = dem.createNode(Node::Kind::ReturnType);
+    rett->addChild(type->getLastChild(), dem);
+    NodePointer fnty = dem.createNode(Node::Kind::FunctionType);
+    fnty->addChild(args, dem);
+    fnty->addChild(rett, dem);
+    type = dem.createNode(Node::Kind::Type);
+    type->addChild(fnty, dem);
+  }
+  if (type->getKind() != Node::Kind::Type)
+    return nullptr;
+  return type;
+}
+
 } // namespace swift_demangle
 } // namespace lldb_private
 

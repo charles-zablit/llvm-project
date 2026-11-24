@@ -67,6 +67,10 @@ public:
 
   void Dump(Stream &stream, llvm::StringRef filter, bool show_color) override;
 
+  /// The type of the Swift function \p mangled_name, as DWARFASTParserSwift
+  /// gives it: CodeView only has a C-like signature.
+  CompilerType GetFunctionType(llvm::StringRef mangled_name);
+
   /// The mangled name of the Swift type alias \p udt would be: older
   /// compilers qualified it by the scopes of the alias (`Swift::$ss5CCharaD`).
   static llvm::StringRef GetTypeAliasName(const llvm::codeview::UDTSym &udt);

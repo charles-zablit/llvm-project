@@ -657,6 +657,30 @@ FindLinkageNameLabel(const CompilandIndexItem &cci, uint32_t proc_offset,
   return std::nullopt;
 }
 
+/// CodeViewDebug::emitDebugInfoForFunction marks a Swift function that throws
+/// with an S_ENVBLOCK, like DWARF does with a DW_TAG_thrown_type.
+static bool IsSwiftThrowingFunction(const CompilandIndexItem &cci,
+                                    uint32_t proc_offset) {
+  CVSymbolArray syms = limitSymbolArrayToScope(
+      cci.m_debug_stream.getSymbolArray(), proc_offset);
+  syms.drop_front();
+  for (const CVSymbol &sym : syms) {
+    if (symbolOpensScope(sym.kind()))
+      break;
+    if (sym.kind() != S_ENVBLOCK)
+      continue;
+    EnvBlockSym env(SymbolRecordKind::EnvBlockSym);
+    if (llvm::Error err =
+            SymbolDeserializer::deserializeAs<EnvBlockSym>(sym, env)) {
+      llvm::consumeError(std::move(err));
+      continue;
+    }
+    if (!env.Fields.empty() && env.Fields[0] == "swift.thrown-type")
+      return true;
+  }
+  return false;
+}
+
 /// CodeViewDebug::emitLocalVariable puts what no CodeView record can describe
 /// of a Swift local into an S_ENVBLOCK right after its S_LOCAL and def ranges.
 static llvm::StringMap<std::string>
@@ -766,10 +790,23 @@ lldb::FunctionSP SymbolFileNativePDB::CreateFunction(PdbCompilandSymId func_id,
   // END SWIFT
   Mangled mangled(mangled_opt.value_or(proc.Name));
 
+  // BEGIN SWIFT
+  lldb::user_id_t func_type_uid = toOpaqueUid(sig_id);
+  bool can_throw = false;
+  if (comp_unit.GetLanguage() == eLanguageTypeSwift) {
+    if (mangled_opt)
+      if (TypeSP swift_type = CreateSwiftFunctionType(func_id, *mangled_opt)) {
+        func_type = swift_type;
+        func_type_uid = swift_type->GetID();
+      }
+    can_throw = IsSwiftThrowingFunction(*cci, func_id.offset);
+  }
+  // END SWIFT
+
   FunctionSP func_sp = std::make_shared<Function>(
-      &comp_unit, toOpaqueUid(func_id), toOpaqueUid(sig_id), mangled,
+      &comp_unit, toOpaqueUid(func_id), func_type_uid, mangled,
       func_type.get(), func_addr,
-      AddressRanges{AddressRange(func_addr, sol.length)});
+      AddressRanges{AddressRange(func_addr, sol.length)}, can_throw);
 
   comp_unit.AddFunction(func_sp);
 
@@ -3286,6 +3323,40 @@ TypeSP SymbolFileNativePDB::CreateSwiftTypeAlias(PdbGlobalSymId id,
                   llvm::expectedToOptional(target_type->GetByteSize(nullptr)),
                   nullptr, LLDB_INVALID_UID, lldb_private::Type::eEncodingIsUID,
                   decl, alias, lldb_private::Type::ResolveState::Full);
+#else
+  return nullptr;
+#endif
+}
+
+/// The type that the mangled name of a Swift function mangles, as
+/// DWARFASTParserSwift gives it. The LF_PROCEDURE is a C-like signature.
+TypeSP SymbolFileNativePDB::CreateSwiftFunctionType(PdbCompilandSymId func_id,
+                                                    llvm::StringRef mangled) {
+#if LLDB_ENABLE_SWIFT
+  if (!swift::Demangle::isSwiftSymbol(mangled))
+    return nullptr;
+  auto ts_or_err = GetTypeSystemForLanguage(lldb::eLanguageTypeSwift);
+  if (!ts_or_err) {
+    llvm::consumeError(ts_or_err.takeError());
+    return nullptr;
+  }
+  auto ts = *ts_or_err;
+  if (!ts || !ts->SupportsLanguage(lldb::eLanguageTypeSwift))
+    return nullptr;
+  // The NativePDB parser of the Swift type system is a PdbAstBuilderSwift.
+  auto *ast_builder = static_cast<PdbAstBuilderSwift *>(ts->GetNativePDBParser());
+  if (!ast_builder)
+    return nullptr;
+  CompilerType ct = ast_builder->GetFunctionType(mangled);
+  if (!ct)
+    return nullptr;
+  Declaration decl;
+  TypeSP type = MakeType(toOpaqueUid(func_id), ct.GetTypeName(), std::nullopt,
+                         nullptr, LLDB_INVALID_UID,
+                         lldb_private::Type::eEncodingIsUID, decl, ct,
+                         lldb_private::Type::ResolveState::Full);
+  m_types[toOpaqueUid(func_id)] = type;
+  return type;
 #else
   return nullptr;
 #endif
