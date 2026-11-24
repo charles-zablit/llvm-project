@@ -2796,6 +2796,19 @@ void SymbolFileNativePDB::AppendFunctionForProcRef(PdbGlobalSymId global,
   sc_list.Append(sc);
 }
 
+// BEGIN SWIFT
+/// Return a Swift type only to a query that accepts Swift: looking up the Clang
+/// type of an imported C typedef by its mangled name, as
+/// SwiftASTContext::GetAsClangType does, would find the S_UDT of the Swift type
+/// alias.
+static bool SwiftLanguageMatches(const TypeQuery &query, Type &type) {
+  if (!query.HasLanguage() || query.LanguageMatches(lldb::eLanguageTypeSwift))
+    return true;
+  return type.GetForwardCompilerType().GetMinimumLanguage() !=
+         lldb::eLanguageTypeSwift;
+}
+// END SWIFT
+
 void SymbolFileNativePDB::FindTypes(const lldb_private::TypeQuery &query,
                                     lldb_private::TypeResults &results) {
 
@@ -2836,6 +2849,10 @@ void SymbolFileNativePDB::FindTypes(const lldb_private::TypeQuery &query,
       TypeSP type_sp = GetOrCreateType(TypeIndex(match_idx));
       if (!type_sp)
         continue;
+      // BEGIN SWIFT
+      if (!SwiftLanguageMatches(query, *type_sp))
+        continue;
+      // END SWIFT
 
       results.InsertUnique(type_sp);
       if (results.Done(query))
@@ -2854,6 +2871,10 @@ void SymbolFileNativePDB::FindTypes(const lldb_private::TypeQuery &query,
     TypeSP type_sp = GetOrCreateTypedef(global);
     if (!type_sp)
       continue;
+    // BEGIN SWIFT
+    if (!SwiftLanguageMatches(query, *type_sp))
+      continue;
+    // END SWIFT
 
     results.InsertUnique(type_sp);
     if (results.Done(query))
