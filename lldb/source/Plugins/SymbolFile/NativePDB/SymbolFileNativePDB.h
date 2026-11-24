@@ -21,6 +21,7 @@
 #include "CompileUnitIndex.h"
 #include "PdbIndex.h"
 #include "PdbAstBuilder.h"
+#include <map>
 #include <optional>
 
 namespace clang {
@@ -280,6 +281,17 @@ private:
                                        PdbCompilandSymId var_id, bool is_param,
                                        bool is_constant = false);
   lldb::TypeSP CreateTypedef(PdbGlobalSymId id);
+  // BEGIN SWIFT
+  /// The Swift type alias of the S_UDT \p id, or null if it isn't one.
+  lldb::TypeSP CreateSwiftTypeAlias(PdbGlobalSymId id,
+                                    const llvm::codeview::UDTSym &udt,
+                                    lldb::TypeSP target_type);
+  /// The Swift type alias whose S_UDT is named \p mangled_name.
+  lldb::TypeSP FindSwiftTypeAlias(llvm::StringRef mangled_name);
+  /// The mangled name of the type alias of the Swift global \p name of \p cci.
+  llvm::StringRef FindSwiftGlobalTypeAlias(const CompilandIndexItem &cci,
+                                           llvm::StringRef name);
+  // END SWIFT
   lldb::CompUnitSP CreateCompileUnit(const CompilandIndexItem &cci);
   lldb::TypeSP CreateType(PdbTypeSymId type_id, CompilerType ct);
   lldb::TypeSP CreateAndCacheType(PdbTypeSymId type_id);
@@ -383,6 +395,10 @@ private:
   // END SWIFT
   /// typedef basename -> Global ID(s) of its S_UDT
   lldb_private::UniqueCStringMap<uint32_t> m_typedef_base_names;
+  // BEGIN SWIFT
+  /// Compiland -> Swift global -> mangled name of the type alias of the global.
+  std::map<uint16_t, llvm::StringMap<std::string>> m_swift_global_aliases;
+  // END SWIFT
   /// Qualified name of a scope of a typedef -> Global ID of a typedef in it.
   llvm::StringMap<uint32_t> m_typedef_scopes;
 

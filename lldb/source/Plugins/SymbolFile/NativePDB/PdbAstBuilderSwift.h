@@ -17,6 +17,7 @@
 
 namespace llvm::codeview {
 class ClassRecord;
+class UDTSym;
 }
 
 namespace llvm::pdb {
@@ -49,9 +50,8 @@ public:
   void EnsureVariable(PdbGlobalSymId var_id) override {}
 
   CompilerType GetOrCreateType(PdbTypeSymId type) override;
-  CompilerType GetOrCreateTypedefType(PdbGlobalSymId id) override {
-    return {};
-  }
+  /// The Swift type alias of the S_UDT \p id, if it is one.
+  CompilerType GetOrCreateTypedefType(PdbGlobalSymId id) override;
   bool CompleteType(CompilerType ct) override { return true; }
 
   void ParseDeclsForContext(CompilerDeclContext context) override {}
@@ -66,6 +66,10 @@ public:
   }
 
   void Dump(Stream &stream, llvm::StringRef filter, bool show_color) override;
+
+  /// The mangled name of the Swift type alias \p udt would be: older
+  /// compilers qualified it by the scopes of the alias (`Swift::$ss5CCharaD`).
+  static llvm::StringRef GetTypeAliasName(const llvm::codeview::UDTSym &udt);
 
   /// To avoid issues with uniquing, bound generics are emitted as follows in DWARF:
   /// - A sized outer structure with no name or identifier

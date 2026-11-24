@@ -18,6 +18,7 @@
 #include "lldb/Utility/Log.h"
 
 #include "llvm/DebugInfo/CodeView/CVTypeVisitor.h"
+#include "llvm/DebugInfo/CodeView/SymbolDeserializer.h"
 #include "llvm/DebugInfo/CodeView/TypeDeserializer.h"
 #include "llvm/DebugInfo/CodeView/TypeVisitorCallbacks.h"
 #include "llvm/DebugInfo/PDB/Native/TpiStream.h"
@@ -188,6 +189,30 @@ CompilerType PdbAstBuilderSwift::GetOrCreateType(PdbTypeSymId type) {
   if (ct)
     m_uid_to_type[uid] = ct;
   return ct;
+}
+
+llvm::StringRef PdbAstBuilderSwift::GetTypeAliasName(const UDTSym &udt) {
+  return udt.Name.contains("::") ? udt.Name.rsplit("::").second : udt.Name;
+}
+
+CompilerType PdbAstBuilderSwift::GetOrCreateTypedefType(PdbGlobalSymId id) {
+  auto *pdb = llvm::dyn_cast<SymbolFileNativePDB>(
+      m_swift_ts.GetSymbolFile()->GetBackingSymbolFile());
+  if (!pdb)
+    return {};
+  CVSymbol sym = pdb->GetIndex().ReadSymbolRecord(id);
+  if (sym.kind() != S_UDT)
+    return {};
+  UDTSym udt(SymbolRecordKind::UDTSym);
+  if (llvm::Error err = SymbolDeserializer::deserializeAs<UDTSym>(sym, udt)) {
+    LLDB_LOG_ERROR(GetLog(LLDBLog::Symbols), std::move(err),
+                   "Failed to deserialize UDTSym: {0}");
+    return {};
+  }
+  llvm::StringRef name = GetTypeAliasName(udt);
+  if (!swift::Demangle::isSwiftSymbol(name))
+    return {};
+  return m_swift_ts.GetTypeFromMangledTypename(ConstString(name));
 }
 
 void PdbAstBuilderSwift::Dump(Stream &stream, llvm::StringRef filter,

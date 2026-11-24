@@ -657,42 +657,47 @@ FindLinkageNameLabel(const CompilandIndexItem &cci, uint32_t proc_offset,
   return std::nullopt;
 }
 
-/// CodeViewDebug::emitLocalVariable puts a location that no def range can
-/// describe into an S_ENVBLOCK right after the S_LOCAL.
-static std::optional<DWARFExpression>
-FindSwiftDWARFLocation(const CompilandIndexItem &cci, uint32_t local_offset,
-                       const ArchSpec &arch) {
+/// CodeViewDebug::emitLocalVariable puts what no CodeView record can describe
+/// of a Swift local into an S_ENVBLOCK right after its S_LOCAL and def ranges.
+static llvm::StringMap<std::string>
+GetSwiftLocalFields(const CompilandIndexItem &cci, uint32_t local_offset) {
+  llvm::StringMap<std::string> fields;
   const CVSymbolArray &syms = cci.m_debug_stream.getSymbolArray();
   auto it = syms.at(local_offset);
   if (it == syms.end())
-    return std::nullopt;
+    return fields;
   for (++it; it != syms.end(); ++it) {
     CVSymbol sym = *it;
-    if (sym.kind() >= S_DEFRANGE && sym.kind() <= S_DEFRANGE_REGISTER_REL)
-      continue;
-    if (sym.kind() == S_DEFRANGE_REGISTER_REL_INDIR)
+    if ((sym.kind() >= S_DEFRANGE && sym.kind() <= S_DEFRANGE_REGISTER_REL) ||
+        sym.kind() == S_DEFRANGE_REGISTER_REL_INDIR)
       continue;
     if (sym.kind() != S_ENVBLOCK)
-      return std::nullopt;
+      break;
     EnvBlockSym env(SymbolRecordKind::EnvBlockSym);
     if (llvm::Error err =
             SymbolDeserializer::deserializeAs<EnvBlockSym>(sym, env)) {
       llvm::consumeError(std::move(err));
-      return std::nullopt;
+      break;
     }
-    if (env.Fields.size() < 2 || env.Fields[0] != "swift.dwarf-location")
-      return std::nullopt;
-    std::string bytes;
-    if (!llvm::tryGetFromHex(env.Fields[1], bytes))
-      return std::nullopt;
-    auto buffer = std::make_shared<DataBufferHeap>(bytes.data(), bytes.size());
-    DataExtractor extractor(buffer, arch.GetByteOrder(),
-                            arch.GetAddressByteSize());
-    DWARFExpression expr(extractor);
-    expr.SetRegisterKind(lldb::eRegisterKindDWARF);
-    return expr;
+    for (size_t i = 0; i + 1 < env.Fields.size(); i += 2)
+      fields[env.Fields[i]] = env.Fields[i + 1].str();
+    break;
   }
-  return std::nullopt;
+  return fields;
+}
+
+/// The DWARF expression of a "swift.dwarf-location" field.
+static std::optional<DWARFExpression>
+MakeSwiftDWARFLocation(llvm::StringRef hex, const ArchSpec &arch) {
+  std::string bytes;
+  if (!llvm::tryGetFromHex(hex, bytes))
+    return std::nullopt;
+  auto buffer = std::make_shared<DataBufferHeap>(bytes.data(), bytes.size());
+  DataExtractor extractor(buffer, arch.GetByteOrder(),
+                          arch.GetAddressByteSize());
+  DWARFExpression expr(extractor);
+  expr.SetRegisterKind(lldb::eRegisterKindDWARF);
+  return expr;
 }
 // END SWIFT
 
@@ -1257,6 +1262,12 @@ VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
   PdbTypeSymId tid(ti, false);
   SymbolFileTypeSP type_sp =
       std::make_shared<SymbolFileType>(*this, toOpaqueUid(tid));
+  // BEGIN SWIFT
+  // CodeView gives the global the type that its type alias aliases.
+  if (comp_unit->GetLanguage() == eLanguageTypeSwift)
+    if (TypeSP alias = FindSwiftTypeAlias(FindSwiftGlobalTypeAlias(cci, name)))
+      type_sp = std::make_shared<SymbolFileType>(*this, alias->GetID());
+  // END SWIFT
   Variable::RangeList ranges;
   auto ts_or_err = GetTypeSystemForLanguage(comp_unit->GetLanguage());
   if (auto err = ts_or_err.takeError())
@@ -2956,6 +2967,9 @@ VariableSP SymbolFileNativePDB::CreateLocalVariable(PdbCompilandSymId scope_id,
 
   VariableInfo var_info;
   bool location_is_constant_data = is_constant;
+  // BEGIN SWIFT
+  llvm::StringMap<std::string> swift_fields;
+  // END SWIFT
 
   if (is_constant) {
     CVSymbol sym = cii->m_debug_stream.readSymbolAtOffset(var_id.offset);
@@ -2993,10 +3007,13 @@ VariableSP SymbolFileNativePDB::CreateLocalVariable(PdbCompilandSymId scope_id,
     if (!func)
       return nullptr;
     // BEGIN SWIFT
-    if (std::optional<DWARFExpression> expr = FindSwiftDWARFLocation(
-            *cii, var_id.offset, module->GetArchitecture()))
-      var_info.location =
-          DWARFExpressionList(module, std::move(*expr), nullptr);
+    swift_fields = GetSwiftLocalFields(*cii, var_id.offset);
+    auto location = swift_fields.find("swift.dwarf-location");
+    if (location != swift_fields.end())
+      if (std::optional<DWARFExpression> expr = MakeSwiftDWARFLocation(
+              location->second, module->GetArchitecture()))
+        var_info.location =
+            DWARFExpressionList(module, std::move(*expr), nullptr);
     // END SWIFT
     // Use empty dwarf expr if optimized away so that it won't be filtered out
     // when lookuping local variables in this scope.
@@ -3009,6 +3026,13 @@ VariableSP SymbolFileNativePDB::CreateLocalVariable(PdbCompilandSymId scope_id,
   TypeSP type_sp = GetOrCreateType(var_info.type);
   if (!type_sp)
     return nullptr;
+  // BEGIN SWIFT
+  // CodeView gives the local the type that its type alias aliases.
+  auto alias = swift_fields.find("swift.type");
+  if (alias != swift_fields.end())
+    if (TypeSP alias_type = FindSwiftTypeAlias(alias->second))
+      type_sp = alias_type;
+  // END SWIFT
   std::string name = var_info.name.str();
   Declaration decl;
   SymbolFileTypeSP sftype =
@@ -3160,6 +3184,11 @@ TypeSP SymbolFileNativePDB::CreateTypedef(PdbGlobalSymId id) {
 
   TypeSP target_type = GetOrCreateType(udt.Type);
 
+  // BEGIN SWIFT
+  if (TypeSP alias = CreateSwiftTypeAlias(id, udt, target_type))
+    return alias;
+  // END SWIFT
+
   auto ts_or_err = GetTypeSystemForLanguage(lldb::eLanguageTypeC_plus_plus);
   if (auto err = ts_or_err.takeError())
     return nullptr;
@@ -3180,6 +3209,94 @@ TypeSP SymbolFileNativePDB::CreateTypedef(PdbGlobalSymId id) {
                   lldb_private::Type::eEncodingIsTypedefUID, decl, ct,
                   lldb_private::Type::ResolveState::Forward);
 }
+
+// BEGIN SWIFT
+/// CodeViewDebug::addToUDTs names the S_UDT of a Swift type alias by its
+/// mangled name. Like DWARFASTParserSwift, name the type by the mangled name
+/// of the aliased type: TypeSystemSwiftTypeRef::ResolveTypeAlias desugars the
+/// alias to it.
+TypeSP SymbolFileNativePDB::CreateSwiftTypeAlias(PdbGlobalSymId id,
+                                                 const UDTSym &udt,
+                                                 TypeSP target_type) {
+#if LLDB_ENABLE_SWIFT
+  if (!target_type || !swift::Demangle::isSwiftSymbol(
+                          PdbAstBuilderSwift::GetTypeAliasName(udt)))
+    return nullptr;
+  auto ts_or_err = GetTypeSystemForLanguage(lldb::eLanguageTypeSwift);
+  if (!ts_or_err) {
+    llvm::consumeError(ts_or_err.takeError());
+    return nullptr;
+  }
+  auto ts = *ts_or_err;
+  PdbAstBuilder *ast_builder = ts ? ts->GetNativePDBParser() : nullptr;
+  if (!ast_builder)
+    return nullptr;
+  CompilerType alias = ast_builder->GetOrCreateTypedefType(id);
+  ConstString target_name =
+      target_type->GetForwardCompilerType().GetMangledTypeName();
+  if (!alias || !target_name)
+    return nullptr;
+  Declaration decl;
+  return MakeType(toOpaqueUid(id), target_name,
+                  llvm::expectedToOptional(target_type->GetByteSize(nullptr)),
+                  nullptr, LLDB_INVALID_UID, lldb_private::Type::eEncodingIsUID,
+                  decl, alias, lldb_private::Type::ResolveState::Full);
+#else
+  return nullptr;
+#endif
+}
+
+TypeSP SymbolFileNativePDB::FindSwiftTypeAlias(llvm::StringRef mangled_name) {
+  if (mangled_name.empty())
+    return nullptr;
+  std::vector<uint32_t> gids;
+  m_typedef_base_names.GetValues(ConstString(mangled_name), gids);
+  for (uint32_t gid : gids)
+    if (TypeSP type = GetOrCreateTypedef(PdbGlobalSymId{gid, false}))
+      return type;
+  return nullptr;
+}
+
+/// CodeViewDebug::emitDebugInfoForGlobal keys an S_ENVBLOCK field by the name
+/// of the global, as the linker moves the S_GDATA32 to the globals stream.
+llvm::StringRef
+SymbolFileNativePDB::FindSwiftGlobalTypeAlias(const CompilandIndexItem &cci,
+                                              llvm::StringRef name) {
+  auto [it, inserted] = m_swift_global_aliases.try_emplace(cci.m_id.modi);
+  llvm::StringMap<std::string> &aliases = it->second;
+  if (inserted) {
+    unsigned depth = 0;
+    for (const CVSymbol &sym : cci.m_debug_stream.getSymbolArray()) {
+      if (symbolOpensScope(sym.kind())) {
+        ++depth;
+        continue;
+      }
+      if (symbolEndsScope(sym.kind())) {
+        if (depth)
+          --depth;
+        continue;
+      }
+      if (depth || sym.kind() != S_ENVBLOCK)
+        continue;
+      EnvBlockSym env(SymbolRecordKind::EnvBlockSym);
+      if (llvm::Error err =
+              SymbolDeserializer::deserializeAs<EnvBlockSym>(sym, env)) {
+        llvm::consumeError(std::move(err));
+        continue;
+      }
+      for (size_t i = 0; i + 1 < env.Fields.size(); i += 2) {
+        llvm::StringRef key = env.Fields[i];
+        if (key.consume_front("swift.type."))
+          aliases[key] = env.Fields[i + 1].str();
+      }
+    }
+  }
+  auto found = aliases.find(name);
+  if (found == aliases.end())
+    return {};
+  return found->second;
+}
+// END SWIFT
 
 TypeSP SymbolFileNativePDB::GetOrCreateTypedef(PdbGlobalSymId id) {
   auto iter = m_types.find(toOpaqueUid(id));
