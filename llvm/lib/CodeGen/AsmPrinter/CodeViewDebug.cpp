@@ -1897,10 +1897,46 @@ static bool shouldEmitUdt(const DIType *T) {
   return true;
 }
 
+// BEGIN SWIFT
+/// The mangled name of the Swift type alias that \p Ty is, possibly qualified
+/// (`let` bindings are const). CodeView lowers a typedef to the type it
+/// aliases, so variables lose the alias.
+static StringRef getSwiftTypeAliasName(const DIType *Ty) {
+  while (const auto *DT = dyn_cast_or_null<DIDerivedType>(Ty)) {
+    switch (DT->getTag()) {
+    case dwarf::DW_TAG_typedef:
+      if (DT->getName().starts_with("$s") || DT->getName().starts_with("$e"))
+        return DT->getName();
+      return {};
+    case dwarf::DW_TAG_const_type:
+    case dwarf::DW_TAG_volatile_type:
+      Ty = DT->getBaseType();
+      continue;
+    default:
+      return {};
+    }
+  }
+  return {};
+}
+// END SWIFT
+
 void CodeViewDebug::addToUDTs(const DIType *Ty) {
   // Don't record empty UDTs.
   if (Ty->getName().empty())
     return;
+  // BEGIN SWIFT
+  // lldb resolves a Swift type alias through the S_UDT of its mangled name, as
+  // through the DW_TAG_typedef in DWARF. Unlike MSVC, emit it into the globals
+  // stream whatever its scope, and named only by the mangled name.
+  if (CurrentSourceLanguage == SourceLanguage::Swift &&
+      Ty->getTag() == dwarf::DW_TAG_typedef) {
+    StringRef Alias = getSwiftTypeAliasName(Ty);
+    if (!Alias.empty()) {
+      GlobalUDTs.emplace_back(Alias.str(), Ty);
+      return;
+    }
+  }
+  // END SWIFT
   if (!shouldEmitUdt(Ty))
     return;
 
@@ -3206,15 +3242,27 @@ void CodeViewDebug::emitLocalVariable(const FunctionInfo &FI,
   }
 
   // BEGIN SWIFT
-  // Read by lldb as the location of the S_LOCAL right before it.
-  if (!Var.SwiftDWARFLocation.empty()) {
+  // Read by lldb as the location and the type alias of the S_LOCAL right
+  // before it.
+  StringRef SwiftTypeAlias;
+  if (CurrentSourceLanguage == SourceLanguage::Swift)
+    SwiftTypeAlias = getSwiftTypeAliasName(Var.DIVar->getType());
+  if (!Var.SwiftDWARFLocation.empty() || !SwiftTypeAlias.empty()) {
     MCSymbol *EnvEnd = beginSymbolRecord(SymbolKind::S_ENVBLOCK);
     OS.AddComment("Reserved");
     OS.emitInt8(0);
-    OS.AddComment("Key");
-    emitNullTerminatedSymbolName(OS, "swift.dwarf-location", 16);
-    OS.AddComment("DWARF expression");
-    emitNullTerminatedSymbolName(OS, toHex(Var.SwiftDWARFLocation), 16);
+    if (!Var.SwiftDWARFLocation.empty()) {
+      OS.AddComment("Key");
+      emitNullTerminatedSymbolName(OS, "swift.dwarf-location", 16);
+      OS.AddComment("DWARF expression");
+      emitNullTerminatedSymbolName(OS, toHex(Var.SwiftDWARFLocation), 16);
+    }
+    if (!SwiftTypeAlias.empty()) {
+      OS.AddComment("Key");
+      emitNullTerminatedSymbolName(OS, "swift.type", 16);
+      OS.AddComment("Type alias");
+      emitNullTerminatedSymbolName(OS, SwiftTypeAlias, 16);
+    }
     OS.AddComment("End of fields");
     OS.emitInt8(0);
     endSymbolRecord(EnvEnd);
@@ -3508,7 +3556,12 @@ void CodeViewDebug::emitDebugInfoForUDTs(
 #endif
   for (const auto &UDT : UDTs) {
     const DIType *T = UDT.second;
-    assert(shouldEmitUdt(T));
+    // BEGIN SWIFT
+    assert((shouldEmitUdt(T) ||
+            (CurrentSourceLanguage == SourceLanguage::Swift &&
+             !getSwiftTypeAliasName(T).empty())) &&
+           "unexpected UDT");
+    // END SWIFT
     MCSymbol *UDTRecordEnd = beginSymbolRecord(SymbolKind::S_UDT);
     OS.AddComment("Type");
     OS.emitInt32(getCompleteTypeIndex(T).getIndex());
@@ -3748,6 +3801,26 @@ void CodeViewDebug::emitDebugInfoForGlobal(const CVGlobalVariable &CVGV) {
     const unsigned LengthOfDataRecord = 12;
     emitNullTerminatedSymbolName(OS, QualifiedName, LengthOfDataRecord);
     endSymbolRecord(DataEnd);
+
+    // BEGIN SWIFT
+    // Read by lldb as the type alias of the global named in the key: linkers
+    // move S_GDATA32 to the globals stream, away from this record.
+    StringRef SwiftTypeAlias;
+    if (CurrentSourceLanguage == SourceLanguage::Swift)
+      SwiftTypeAlias = getSwiftTypeAliasName(DIGV->getType());
+    if (!SwiftTypeAlias.empty()) {
+      MCSymbol *EnvEnd = beginSymbolRecord(SymbolKind::S_ENVBLOCK);
+      OS.AddComment("Reserved");
+      OS.emitInt8(0);
+      OS.AddComment("Key");
+      emitNullTerminatedSymbolName(OS, "swift.type." + QualifiedName, 16);
+      OS.AddComment("Type alias");
+      emitNullTerminatedSymbolName(OS, SwiftTypeAlias, 16);
+      OS.AddComment("End of fields");
+      OS.emitInt8(0);
+      endSymbolRecord(EnvEnd);
+    }
+    // END SWIFT
   } else {
     const DIExpression *DIE = cast<const DIExpression *>(CVGV.GVInfo);
     assert(DIE->isConstant() &&
