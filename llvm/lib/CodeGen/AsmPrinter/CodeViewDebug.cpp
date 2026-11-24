@@ -3511,9 +3511,11 @@ void CodeViewDebug::beginInstruction(const MachineInstr *MI) {
 
   // BEGIN SWIFT
   // lldb takes the prologue to end at the first line entry of an inline site
-  // unless the procedure says where it ends, as MSVC's do.
+  // unless the procedure says where it ends, as MSVC's do. Like the
+  // prologue_end of DWARF, it ends at the first location with a line.
   if (CurrentSourceLanguage == SourceLanguage::Swift && !CurFn->PrologEnd &&
-      MI->getParent()->isEntryBlock()) {
+      MI->getParent()->isEntryBlock() && MI->getDebugLoc() &&
+      MI->getDebugLoc().getLine() != 0) {
     MCSymbol *PrologEnd = MMI->getContext().createTempSymbol();
     OS.emitLabel(PrologEnd);
     CurFn->PrologEnd = PrologEnd;
