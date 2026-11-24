@@ -699,6 +699,22 @@ MakeSwiftDWARFLocation(llvm::StringRef hex, const ArchSpec &arch) {
   expr.SetRegisterKind(lldb::eRegisterKindDWARF);
   return expr;
 }
+
+/// A Swift let binding has a const type, like a DW_TAG_const_type in DWARF.
+static bool IsSwiftLetBinding(TypeIndex ti, TpiStream &tpi) {
+  if (ti.isSimple())
+    return false;
+  CVType cvt = tpi.getType(ti);
+  if (cvt.kind() != LF_MODIFIER)
+    return false;
+  ModifierRecord mr;
+  if (llvm::Error err =
+          TypeDeserializer::deserializeAs<ModifierRecord>(cvt, mr)) {
+    llvm::consumeError(std::move(err));
+    return false;
+  }
+  return (mr.Modifiers & ModifierOptions::Const) != ModifierOptions::None;
+}
 // END SWIFT
 
 lldb::FunctionSP SymbolFileNativePDB::CreateFunction(PdbCompilandSymId func_id,
@@ -1301,6 +1317,10 @@ VariableSP SymbolFileNativePDB::CreateGlobalVariable(PdbGlobalSymId var_id) {
   bool location_is_constant_data = false;
   bool static_member = false;
   bool is_constant = false;
+  // BEGIN SWIFT
+  if (comp_unit->GetLanguage() == eLanguageTypeSwift)
+    is_constant = IsSwiftLetBinding(ti, m_index->tpi());
+  // END SWIFT
   VariableSP var_sp = std::make_shared<Variable>(
       toOpaqueUid(var_id), var_name.c_str(), mangled_name.str().c_str(),
       type_sp, scope, comp_unit.get(), ranges, &decl, location, is_external,
@@ -3058,11 +3078,15 @@ VariableSP SymbolFileNativePDB::CreateLocalVariable(PdbCompilandSymId scope_id,
   }
   // END SWIFT
   bool static_member = false;
+  // BEGIN SWIFT
+  bool let_binding = comp_unit_sp->GetLanguage() == eLanguageTypeSwift &&
+                     IsSwiftLetBinding(var_info.type, m_index->tpi());
+  // END SWIFT
   Variable::RangeList scope_ranges;
   VariableSP var_sp = std::make_shared<Variable>(
       toOpaqueUid(var_id), name.c_str(), name.c_str(), sftype, var_scope, block,
       scope_ranges, &decl, var_info.location, external, artificial,
-      location_is_constant_data, static_member);
+      location_is_constant_data, static_member, let_binding);
   if (!is_param) {
     auto ts_or_err = GetTypeSystemForLanguage(comp_unit_sp->GetLanguage());
     if (auto err = ts_or_err.takeError())
