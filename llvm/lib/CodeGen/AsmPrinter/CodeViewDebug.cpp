@@ -1331,6 +1331,29 @@ void CodeViewDebug::emitDebugInfoForFunction(const Function *GV,
       emitNullTerminatedSymbolName(OS, LinkageName);
       endSymbolRecord(LabelEnd);
     }
+
+    // DWARF gives a throwing function a DW_TAG_thrown_type, as its mangled name
+    // need not say that it throws.
+    if (CurrentSourceLanguage == SourceLanguage::Swift && SP &&
+        !SP->getThrownTypes().empty()) {
+      StringRef Thrown;
+      if (const auto *Ty = dyn_cast_or_null<DIType>(SP->getThrownTypes()[0])) {
+        Thrown = Ty->getName();
+        if (const auto *CTy = dyn_cast<DICompositeType>(Ty))
+          if (!CTy->getIdentifier().empty())
+            Thrown = CTy->getIdentifier();
+      }
+      MCSymbol *EnvEnd = beginSymbolRecord(SymbolKind::S_ENVBLOCK);
+      OS.AddComment("Reserved");
+      OS.emitInt8(0);
+      OS.AddComment("Key");
+      emitNullTerminatedSymbolName(OS, "swift.thrown-type", 16);
+      OS.AddComment("Thrown type");
+      emitNullTerminatedSymbolName(OS, Thrown.empty() ? "?" : Thrown, 16);
+      OS.AddComment("End of fields");
+      OS.emitInt8(0);
+      endSymbolRecord(EnvEnd);
+    }
     // END SWIFT
 
     emitInlinees(FI.Inlinees);
